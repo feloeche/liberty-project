@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consola de operación · Proyecto Ágil</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="marca">
+      <strong>Proyecto Ágil</strong> <span class="tenue">· consola de operación</span>
+    </div>
+    <nav class="topbar-acciones">
+      <span id="estado-refresh" class="estado-refresh" aria-live="polite"></span>
+      <a class="btn btn-sec" href="/">← Volver al chat</a>
+    </nav>
+  </header>
+
+  <main class="op">
+    <div class="op-barra">
+      <div>
+        <h1 style="font-size:20px">Consola de operación</h1>
+        <p class="tenue">Simula Amazon Connect (cola de casos para asesores) y la consola interna de cobranza. Se actualiza cada 5 s.</p>
+      </div>
+      <div id="zona-reinicio" class="confirmar">
+        <button id="btn-reiniciar-demo" class="btn" type="button">Reiniciar demo</button>
+      </div>
+    </div>
+
+    <section class="tarjeta campana" aria-labelledby="titulo-campana">
+      <h2 id="titulo-campana">📣 Lanzar campaña (contacto proactivo por WhatsApp)</h2>
+      <p class="tenue nota-campana">El agente escribe primero con una plantilla aprobada. Las reglas de supresión (consentimiento, horario, disputas, casos humanos, promesas, frecuencia) se aplican en el backend antes de enviar.</p>
+      <form id="form-campana" class="campana-grid">
+        <fieldset class="campana-segmentos">
+          <legend>Segmentos</legend>
+          <div id="lista-segmentos" class="segmentos"><span class="tenue">Cargando segmentos…</span></div>
+        </fieldset>
+        <div class="plantilla-preview" id="plantilla-preview" aria-label="Vista previa de la plantilla"></div>
+        <div class="campana-acciones">
+          <label class="toggle">
+            <input type="checkbox" id="forzar-horario">
+            <span>Ignorar horario <span class="tenue">(solo demo · queda en auditoría)</span></span>
+          </label>
+          <button id="btn-lanzar" class="btn btn-primario" type="submit">Lanzar campaña</button>
+          <span id="estado-campana" class="estado-refresh" role="status"></span>
+        </div>
+      </form>
+      <div id="resultado-campana" class="resultado-campana" aria-live="polite"></div>
+      <h3 class="subtitulo">Historial de campañas</h3>
+      <div class="tabla-wrap" id="tabla-campanas"></div>
+    </section>
+
+    <section class="kpis" aria-label="Resumen">
+      <div class="kpi"><div class="kpi-valor" id="kpi-casos">–</div><div class="kpi-label">Casos escalados</div></div>
+      <div class="kpi"><div class="kpi-valor" id="kpi-promesas">–</div><div class="kpi-label">Promesas de pago</div></div>
+      <div class="kpi"><div class="kpi-valor" id="kpi-acuerdos">–</div><div class="kpi-label">Acuerdos en cuotas</div></div>
+      <div class="kpi"><div class="kpi-valor" id="kpi-links">–</div><div class="kpi-label">Links de pago</div></div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Casos escalados a un asesor (≈ Amazon Connect)</h2>
+      <div class="tabla-wrap" id="tabla-casos"></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="tarjeta"><h2>Promesas de pago</h2><div class="tabla-wrap" id="tabla-promesas"></div></section>
+      <section class="tarjeta"><h2>Acuerdos en cuotas</h2><div class="tabla-wrap" id="tabla-acuerdos"></div></section>
+    </div>
+
+    <section class="tarjeta"><h2>Links de pago generados</h2><div class="tabla-wrap" id="tabla-links"></div></section>
+
+    <section class="tarjeta">
+      <h2>Auditoría (≈ CloudWatch Logs)</h2>
+      <div class="filtros">
+        <label for="filtro-cliente">Cliente</label>
+        <select id="filtro-cliente"><option value="">Todos</option></select>
+        <span class="tenue" style="font-size:12px">Últimos 100 eventos, más recientes primero.</span>
+      </div>
+      <div class="tabla-wrap" id="tabla-auditoria"></div>
+    </section>
+  </main>
+
+  <script src="/static/api.js"></script>
+  <script src="/static/operacion.js"></script>
+</body>
+</html>

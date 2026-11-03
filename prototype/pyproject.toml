@@ -1,0 +1,27 @@
+[project]
+name = "agil"
+version = "0.1.0"
+description = "Prototipo del agente conversacional de cobranza (Proyecto Ágil, LLA Panamá)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=2.0",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+# Bedrock (ruta AWS): firma SigV4 con credenciales de AWS
+bedrock = ["anthropic[bedrock]>=2.0"]
+
+[dependency-groups]
+dev = [
+    "moto[dynamodb]>=5",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

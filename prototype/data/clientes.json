@@ -1,0 +1,334 @@
+{
+  "_nota": "Datos 100% ficticios para el prototipo. Montos en USD (B/. a la par). Simula la réplica del sistema de facturación/CRM.",
+  "clientes": [
+    {
+      "cliente_id": "C001",
+      "nombre": "Ana Rodríguez",
+      "telefono": "+50761234521",
+      "cedula": "8-123-4521",
+      "tipo": "residencial",
+      "antiguedad_meses": 58,
+      "arpu_usd": 45.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Móvil pospago 15GB",
+        "Internet hogar 100 Mbps"
+      ],
+      "campana_permite_acuerdo": false,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-10-0001",
+          "vencimiento": "2026-10-25",
+          "monto": 38.5
+        }
+      ],
+      "dias_mora": 8,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2025-11-10",
+            "monto": 40.0,
+            "estado": "cumplida"
+          }
+        ],
+        "contactos_recientes": [
+          {
+            "fecha": "2026-10-28",
+            "canal": "whatsapp",
+            "resultado": "recordatorio enviado"
+          }
+        ],
+        "reclamos_abiertos": []
+      },
+      "opt_in": true,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C002",
+      "nombre": "Carlos Méndez",
+      "telefono": "+50762227788",
+      "cedula": "4-765-7788",
+      "tipo": "residencial",
+      "antiguedad_meses": 30,
+      "arpu_usd": 70.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Móvil pospago 30GB",
+        "TV + Internet 200 Mbps"
+      ],
+      "campana_permite_acuerdo": true,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-09-0412",
+          "vencimiento": "2026-09-28",
+          "monto": 71.25
+        },
+        {
+          "factura": "F-2026-10-0412",
+          "vencimiento": "2026-10-28",
+          "monto": 71.5
+        }
+      ],
+      "dias_mora": 35,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2026-03-02",
+            "monto": 70.0,
+            "estado": "cumplida"
+          }
+        ],
+        "contactos_recientes": [
+          {
+            "fecha": "2026-10-20",
+            "canal": "sms",
+            "resultado": "sin respuesta"
+          }
+        ],
+        "reclamos_abiertos": []
+      },
+      "opt_in": true,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C003",
+      "nombre": "Luis Batista",
+      "telefono": "+50763331190",
+      "cedula": "8-901-1190",
+      "tipo": "residencial",
+      "antiguedad_meses": 14,
+      "arpu_usd": 70.0,
+      "estado_servicio": "suspendido",
+      "servicios": [
+        "Móvil pospago 20GB"
+      ],
+      "campana_permite_acuerdo": true,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-08-0777",
+          "vencimiento": "2026-08-22",
+          "monto": 70.0
+        },
+        {
+          "factura": "F-2026-09-0777",
+          "vencimiento": "2026-09-22",
+          "monto": 70.0
+        },
+        {
+          "factura": "F-2026-10-0777",
+          "vencimiento": "2026-10-22",
+          "monto": 70.0
+        }
+      ],
+      "dias_mora": 72,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2026-08-30",
+            "monto": 70.0,
+            "estado": "incumplida"
+          },
+          {
+            "fecha": "2026-09-30",
+            "monto": 140.0,
+            "estado": "incumplida"
+          }
+        ],
+        "contactos_recientes": [
+          {
+            "fecha": "2026-10-05",
+            "canal": "whatsapp",
+            "resultado": "promesa incumplida"
+          },
+          {
+            "fecha": "2026-10-31",
+            "canal": "llamada",
+            "resultado": "no contesta"
+          }
+        ],
+        "reclamos_abiertos": []
+      },
+      "opt_in": true,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C004",
+      "nombre": "María Fernández",
+      "telefono": "+50764448810",
+      "cedula": "3-221-8810",
+      "tipo": "residencial",
+      "antiguedad_meses": 96,
+      "arpu_usd": 60.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Móvil pospago 25GB con roaming"
+      ],
+      "campana_permite_acuerdo": true,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-10-0930",
+          "vencimiento": "2026-10-13",
+          "monto": 95.2
+        }
+      ],
+      "dias_mora": 20,
+      "historial": {
+        "promesas": [],
+        "contactos_recientes": [],
+        "reclamos_abiertos": [
+          {
+            "ticket": "R-55120",
+            "fecha": "2026-10-15",
+            "motivo": "Cargo de roaming no reconocido",
+            "estado": "en revisión"
+          }
+        ]
+      },
+      "opt_in": true,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C005",
+      "nombre": "Inversiones Istmo S.A.",
+      "telefono": "+50765550001",
+      "cedula": "155-0001-2024",
+      "tipo": "B2B",
+      "antiguedad_meses": 40,
+      "arpu_usd": 1400.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Fibra dedicada 1 Gbps",
+        "25 líneas móviles corporativas"
+      ],
+      "campana_permite_acuerdo": false,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-09-B020",
+          "vencimiento": "2026-09-18",
+          "monto": 1425.0
+        },
+        {
+          "factura": "F-2026-10-B020",
+          "vencimiento": "2026-10-18",
+          "monto": 1425.0
+        }
+      ],
+      "dias_mora": 45,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2026-05-15",
+            "monto": 1425.0,
+            "estado": "cumplida"
+          }
+        ],
+        "contactos_recientes": [],
+        "reclamos_abiertos": []
+      },
+      "opt_in": true,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C006",
+      "nombre": "Rosa Quintero",
+      "telefono": "+50766663344",
+      "cedula": "9-332-3344",
+      "tipo": "residencial",
+      "antiguedad_meses": 72,
+      "arpu_usd": 55.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Internet hogar 200 Mbps",
+        "Línea fija"
+      ],
+      "campana_permite_acuerdo": true,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-08-0201",
+          "vencimiento": "2026-08-30",
+          "monto": 55.0
+        },
+        {
+          "factura": "F-2026-09-0201",
+          "vencimiento": "2026-09-30",
+          "monto": 55.0
+        },
+        {
+          "factura": "F-2026-10-0201",
+          "vencimiento": "2026-10-30",
+          "monto": 55.0
+        }
+      ],
+      "dias_mora": 64,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2026-01-12",
+            "monto": 55.0,
+            "estado": "cumplida"
+          }
+        ],
+        "contactos_recientes": [
+          {
+            "fecha": "2026-10-10",
+            "canal": "whatsapp",
+            "resultado": "cliente indicó baja de ingresos"
+          }
+        ],
+        "reclamos_abiertos": []
+      },
+      "opt_in": false,
+      "opt_out": false
+    },
+    {
+      "cliente_id": "C007",
+      "nombre": "Jorge Pinzón",
+      "telefono": "+50767775566",
+      "cedula": "2-118-5566",
+      "tipo": "residencial",
+      "antiguedad_meses": 120,
+      "arpu_usd": 40.0,
+      "estado_servicio": "activo",
+      "servicios": [
+        "Móvil pospago 10GB"
+      ],
+      "campana_permite_acuerdo": true,
+      "facturas_vencidas": [
+        {
+          "factura": "F-2026-07-0555",
+          "vencimiento": "2026-07-29",
+          "monto": 40.0
+        },
+        {
+          "factura": "F-2026-08-0555",
+          "vencimiento": "2026-08-29",
+          "monto": 40.0
+        },
+        {
+          "factura": "F-2026-09-0555",
+          "vencimiento": "2026-09-29",
+          "monto": 40.0
+        },
+        {
+          "factura": "F-2026-10-0555",
+          "vencimiento": "2026-10-29",
+          "monto": 40.0
+        }
+      ],
+      "dias_mora": 95,
+      "historial": {
+        "promesas": [
+          {
+            "fecha": "2026-06-01",
+            "monto": 40.0,
+            "estado": "cumplida"
+          }
+        ],
+        "contactos_recientes": [],
+        "reclamos_abiertos": []
+      },
+      "opt_in": true,
+      "opt_out": false
+    }
+  ]
+}

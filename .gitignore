@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Estado local del prototipo (store.json y audit.jsonl de las corridas)
+prototype/var/
+
+# Secretos: nunca al repo
+.env
+prototype/infra/.demo-token
+
+# Artefactos de empaquetado y despliegue (se regeneran con `make build`)
+prototype/infra/.build/
+prototype/infra/.aws-sam/
+
+# macOS
+.DS_Store
+
+# Capturas y logs de las pruebas de navegador (Playwright MCP)
+.playwright-mcp/
+
+# Material personal de preparación y copia del enunciado: no forman parte del entregable
+preparacion/
+reference/

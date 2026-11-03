@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proyecto Ágil · demo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="app">
+  <header class="topbar">
+    <div class="marca">
+      <strong>Proyecto Ágil</strong> <span class="tenue">· demo del agente de cobranza</span>
+    </div>
+    <nav class="topbar-acciones">
+      <span id="chip-modo" class="chip" title="Cerebro del agente">cargando…</span>
+      <a class="btn btn-sec" href="/operacion">Consola de operación →</a>
+    </nav>
+  </header>
+
+  <!-- Pestañas: solo visibles en móvil; en desktop se ven las 3 columnas. -->
+  <div class="tabs" role="tablist" aria-label="Secciones">
+    <button role="tab" id="tab-clientes" aria-controls="col-clientes" aria-selected="false">Clientes</button>
+    <button role="tab" id="tab-chat" aria-controls="col-chat" aria-selected="true">Chat</button>
+    <button role="tab" id="tab-traza" aria-controls="col-traza" aria-selected="false">Cómo decidió</button>
+  </div>
+
+  <main class="layout">
+    <!-- (1) Clientes ficticios -->
+    <section id="col-clientes" class="col" role="tabpanel" aria-labelledby="tab-clientes">
+      <h2 class="col-titulo">Clientes</h2>
+      <p class="nota">Datos ficticios. La pista de cédula existe solo para que puedas verificarte en la demo.</p>
+      <ul id="lista-clientes" class="lista-clientes"></ul>
+    </section>
+
+    <!-- (2) Chat tipo WhatsApp (simulado) -->
+    <section id="col-chat" class="col col-chat activa" role="tabpanel" aria-labelledby="tab-chat">
+      <div class="chat-header">
+        <div class="avatar" aria-hidden="true">A</div>
+        <div class="chat-header-texto">
+          <strong>Asistente virtual LLA</strong>
+          <span id="chat-sub" class="chat-sub">Elige un cliente</span>
+        </div>
+        <button id="btn-reiniciar" class="btn btn-chat" type="button">Reiniciar conversación</button>
+      </div>
+      <div id="mensajes" class="mensajes" aria-live="polite" aria-relevant="additions" role="log"
+           aria-label="Conversación"></div>
+      <div id="sugeridos" class="sugeridos" aria-label="Mensajes sugeridos"></div>
+      <form id="form-chat" class="chat-input">
+        <label for="texto" class="sr-only">Mensaje</label>
+        <textarea id="texto" rows="1" maxlength="1000" placeholder="Escribe un mensaje" required></textarea>
+        <button id="btn-enviar" class="btn-enviar" type="submit" aria-label="Enviar">➤</button>
+      </form>
+    </section>
+
+    <!-- (3) Traza: lo que normalmente es invisible -->
+    <section id="col-traza" class="col" role="tabpanel" aria-labelledby="tab-traza">
+      <h2 class="col-titulo">Cómo decidió el agente</h2>
+      <p class="nota">Cada turno muestra contacto proactivo 📣, verificación 🔐, guardrails 🛡, tools ⚙ (con entrada y resultado) y la decisión final.</p>
+      <ol id="traza" class="traza" aria-live="polite"></ol>
+    </section>
+  </main>
+
+  <script src="/static/api.js"></script>
+  <script src="/static/chat.js"></script>
+</body>
+</html>
