@@ -3,7 +3,7 @@
 **AI Engineer · Technical Assessment · Liberty Latin America (Panamá)**
 Autor: Felipe Echeverri — noviembre 2026
 
-Este repositorio contiene mi propuesta de arquitectura y un prototipo funcional de un agente de IA que conversa con clientes que tienen facturas vencidas. El agente consulta su saldo (datos ficticios), decide si **gestiona** el caso (link de pago, promesa o acuerdo) o lo **escala** a una persona, y deja todo registrado.
+Este repositorio contiene mi [propuesta de arquitectura](docs/Propuesta_Arquitectura_Agil.pdf) y un prototipo funcional de un agente de IA que conversa con clientes que tienen facturas vencidas. El agente consulta su saldo (datos ficticios), decide si **gestiona** el caso (link de pago, promesa o acuerdo) o lo **escala** a una persona, y deja todo registrado.
 
 **Principio de diseño:** *el LLM conversa, el código decide.* Montos, plazos, cuotas, a quién contactar y cuándo escalar viven en código determinístico y testeado. El modelo redacta y elige herramientas, pero no puede saltarse una regla del negocio.
 
@@ -62,12 +62,6 @@ Para usar Claude de verdad:
 
 ---
 
-## Demo desplegada en AWS
-
-El mismo código está desplegado en AWS con **Claude Sonnet 4.6 en Amazon Bedrock**: una Lambda (Python 3.12, arm64) detrás de un HTTP API, el estado en DynamoDB, los logs en CloudWatch y una regla de EventBridge Scheduler para la campaña diaria (creada desactivada). La infraestructura es código (AWS SAM, `prototype/infra/template.yaml`) y se borra con un comando.
-
-La URL y el token de acceso los comparto por separado y los muestro en la sesión. Desplegarlo en otra cuenta: ver [`prototype/README.md` → Despliegue en AWS](prototype/README.md#4-despliegue-en-aws).
-
 ---
 
 ## Qué hay en el repositorio
@@ -76,7 +70,8 @@ La URL y el token de acceso los comparto por separado y los muestro en la sesió
 .
 ├── README.md                          ← este archivo
 ├── docs/
-│   └── PROPUESTA_ARQUITECTURA.md      ← propuesta de arquitectura y estrategia (para el comité)
+│   ├── Propuesta_Arquitectura_Agil.pdf ← propuesta de arquitectura y estrategia
+│   └── PROPUESTA_ARQUITECTURA.md      ← versión en Markdown
 └── prototype/
     ├── README.md                      ← detalle técnico: módulos, decisiones, despliegue
     ├── agil/                          ← código del agente (Python)
