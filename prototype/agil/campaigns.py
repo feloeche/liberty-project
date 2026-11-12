@@ -1,114 +1,118 @@
-"""Contacto proactivo: campañas de aviso por WhatsApp (propuesta, §4.2).
+"""Proactive contact: WhatsApp notice campaigns (proposal, §4.2).
 
-Quién recibe un mensaje lo deciden reglas DETERMINÍSTICAS en código, no el LLM:
-son obligaciones de cumplimiento (consentimiento, horario, no cobrar en disputa)
-y tienen que ser auditables y repetibles. El LLM entra recién cuando el cliente
-responde, y por el mismo camino de siempre (verificación, tools, guardrails).
+Who receives a message is decided by DETERMINISTIC rules in code, not by the LLM:
+they are compliance obligations (consent, contact hours, no collecting during a
+dispute) and must be auditable and repeatable. The LLM only comes in when the
+customer replies, through the usual path (verification, tools, guardrails).
 
-La plantilla (categoría UTILITY, aprobada por Meta para escribir fuera de la
-ventana de 24 h) NO lleva monto a propósito: si el número fue reasignado, el
-mensaje lo lee un tercero y revelaría una deuda. El monto solo se muestra
-después de verificar la identidad. En producción la lista de clientes saldría
-de una consulta de Athena sobre el data lake, no del JSON de demo."""
+The template (UTILITY category, approved by Meta to write outside the 24 h
+window) deliberately carries NO amount: if the number was reassigned, a third
+party reads the message and it would reveal a debt. The amount is only shown
+after identity verification. In production the customer list would come from an
+Athena query over the data lake, not from the demo JSON.
+
+The template text and the suppression `detail` strings stay in Spanish: the first
+is what the customer reads, the second is shown to the collections team."""
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from . import config
-from .store import auditar
-from .tools import ACCIONES, saldo_de, segmentar
+from .store import audit
+from .tools import ACTIONS, balance_of, segment_of
 
 PANAMA = ZoneInfo("America/Panama")
-HORARIO = (8, 19)  # 8:00 a 18:59, lunes a sábado: horario permitido para contactar
-DIAS_ENTRE_CONTACTOS = 3
-SISTEMA = "SISTEMA"  # partition key de los ítems que no son de un cliente (las campañas)
-PLANTILLA = {"nombre": "aviso_cuenta_v1", "categoria": "UTILITY",
-             "texto": "Hola {{1}}, te escribe el asistente virtual de LLA. Tienes un aviso pendiente sobre "
-                      "tu cuenta. Responde a este mensaje para revisarlo. Para no recibir estos avisos, "
-                      "responde BAJA."}
-NOMBRES = {"olvidadizo": "Olvidadizo", "dificultad_temporal": "Dificultad temporal",
-           "reincidente": "Reincidente", "en_disputa": "En disputa", "alto_valor_b2b": "Alto valor B2B"}
+CONTACT_HOURS = (8, 19)  # 8:00 to 18:59, Monday to Saturday: allowed contact window
+DAYS_BETWEEN_CONTACTS = 3
+SYSTEM = "SYSTEM"  # partition key for items that don't belong to a customer (campaigns)
+TEMPLATE = {"name": "account_notice_v1", "category": "UTILITY",
+            "text": "Hola {{1}}, te escribe el asistente virtual de LLA. Tienes un aviso pendiente sobre "
+                    "tu cuenta. Responde a este mensaje para revisarlo. Para no recibir estos avisos, "
+                    "responde BAJA."}
+# Display names for the operations console (Spanish UI).
+SEGMENT_NAMES = {"forgetful": "Olvidadizo", "temporary_hardship": "Dificultad temporal",
+                 "repeat_defaulter": "Reincidente", "in_dispute": "En disputa",
+                 "high_value_b2b": "Alto valor B2B"}
 
 
-def ahora_panama() -> datetime:
-    """Fecha de negocio (AGIL_HOY, para demos reproducibles) con la hora real de Panamá."""
-    return datetime.combine(config.hoy(), datetime.now(PANAMA).time(), PANAMA)
+def panama_now() -> datetime:
+    """Business date (AGIL_TODAY, for reproducible demos) with Panama's real time of day."""
+    return datetime.combine(config.today(), datetime.now(PANAMA).time(), PANAMA)
 
 
-def en_horario(ahora: datetime) -> bool:
-    return ahora.weekday() < 6 and HORARIO[0] <= ahora.hour < HORARIO[1]
+def within_hours(now: datetime) -> bool:
+    return now.weekday() < 6 and CONTACT_HOURS[0] <= now.hour < CONTACT_HOURS[1]
 
 
-def ultimo_contacto(cliente: dict, store) -> str | None:
-    """El más reciente entre los contactos del CRM y los que registró una campaña."""
-    fechas = [c["fecha"] for c in cliente["historial"]["contactos_recientes"]]
-    # 'fecha' es la fecha de negocio de la campaña (no el reloj del servidor), igual que la del CRM.
-    fechas += [c.get("fecha", c["creado"]) for c in store.buscar("contactos", cliente["cliente_id"])]
-    return max(fechas, default=None)  # ISO: el orden de texto es el orden temporal
+def last_contact(customer: dict, store) -> str | None:
+    """The most recent between the CRM contacts and those recorded by a campaign."""
+    dates = [c["date"] for c in customer["history"]["recent_contacts"]]
+    # 'date' is the campaign's business date (not the server clock), same as the CRM's.
+    dates += [c.get("date", c["created"]) for c in store.find("contacts", customer["customer_id"])]
+    return max(dates, default=None)  # ISO: text order is chronological order
 
 
-def motivo_supresion(cliente: dict, store, ahora: datetime, forzar_horario: bool) -> tuple[str, str] | None:
-    """(motivo, detalle) de la PRIMERA regla que impide contactar, o None si se puede.
-    El orden importa: primero el consentimiento y la ley, después la operación."""
-    cid, h = cliente["cliente_id"], cliente["historial"]
-    reclamo = h["reclamos_abiertos"][0]["ticket"] if h["reclamos_abiertos"] else None
-    casos = store.buscar("escalamientos", cid)
-    ultimo = ultimo_contacto(cliente, store) or ""  # "" y no None: los detalles se arman todos de una vez
-    dias = (ahora.date() - date.fromisoformat(ultimo[:10])).days if ultimo else None
-    reglas = [
-        ("sin_opt_in", not cliente.get("opt_in"), "No dio consentimiento para recibir mensajes por WhatsApp"),
-        ("opt_out", cliente.get("opt_out"), "Pidió no recibir más avisos (BAJA)"),
-        ("fuera_de_horario", not forzar_horario and not en_horario(ahora),
-         f"Fuera del horario permitido (lun-sáb {HORARIO[0]}:00-{HORARIO[1]}:00, hora de Panamá)"),
-        ("reclamo_abierto", reclamo, f"Reclamo {reclamo} abierto: no se cobra durante una disputa"),
-        ("segmento_no_cobrable", segmentar(cliente) == "alto_valor_b2b", "Cuenta B2B: la gestiona un ejecutivo"),
-        ("caso_humano_abierto", casos, f"Caso {casos[-1]['caso_id']} en manos de un asesor" if casos else ""),
-        ("promesa_vigente", any(p["estado"] == "activa" for p in store.buscar("promesas", cid)),
+def suppression_reason(customer: dict, store, now: datetime, force_hours: bool) -> tuple[str, str] | None:
+    """(reason, detail) of the FIRST rule that prevents contact, or None if allowed.
+    Order matters: consent and the law first, operations second."""
+    cid, h = customer["customer_id"], customer["history"]
+    claim = h["open_claims"][0]["ticket"] if h["open_claims"] else None
+    cases = store.find("escalations", cid)
+    last = last_contact(customer, store) or ""  # "" not None: all details are built at once
+    days = (now.date() - date.fromisoformat(last[:10])).days if last else None
+    rules = [
+        ("no_opt_in", not customer.get("opt_in"), "No dio consentimiento para recibir mensajes por WhatsApp"),
+        ("opt_out", customer.get("opt_out"), "Pidió no recibir más avisos (BAJA)"),
+        ("outside_hours", not force_hours and not within_hours(now),
+         f"Fuera del horario permitido (lun-sáb {CONTACT_HOURS[0]}:00-{CONTACT_HOURS[1]}:00, hora de Panamá)"),
+        ("open_claim", claim, f"Reclamo {claim} abierto: no se cobra durante una disputa"),
+        ("non_collectable_segment", segment_of(customer) == "high_value_b2b", "Cuenta B2B: la gestiona un ejecutivo"),
+        ("open_human_case", cases, f"Caso {cases[-1]['case_id']} en manos de un asesor" if cases else ""),
+        ("active_promise", any(p["status"] == "active" for p in store.find("promises", cid)),
          "Tiene una promesa de pago vigente"),
-        ("contactado_recientemente", dias is not None and dias < DIAS_ENTRE_CONTACTOS,
-         f"Contactado el {ultimo[:10]} (mínimo {DIAS_ENTRE_CONTACTOS} días entre contactos)"),
-        ("sin_saldo", saldo_de(cliente) <= 0, "No tiene saldo vencido"),
+        ("recently_contacted", days is not None and days < DAYS_BETWEEN_CONTACTS,
+         f"Contactado el {last[:10]} (mínimo {DAYS_BETWEEN_CONTACTS} días entre contactos)"),
+        ("no_balance", balance_of(customer) <= 0, "No tiene saldo vencido"),
     ]
-    return next(((motivo, detalle) for motivo, aplica, detalle in reglas if aplica), None)
+    return next(((reason, detail) for reason, applies, detail in rules if applies), None)
 
 
-def listar_segmentos(clientes: dict) -> list[dict]:
-    return [{"id": s, "nombre": NOMBRES[s],
-             "elegibles_estimados": sum(segmentar(c) == s for c in clientes.values())} for s in ACCIONES]
+def list_segments(customers: dict) -> list[dict]:
+    return [{"id": s, "name": SEGMENT_NAMES[s],
+             "estimated_eligible": sum(segment_of(c) == s for c in customers.values())} for s in ACTIONS]
 
 
-def ejecutar_campana(clientes: dict, store, segmentos: list[str] | None = None,
-                     ahora: datetime | None = None, forzar_horario: bool = False) -> dict:
-    """Evalúa las reglas para cada cliente de los segmentos pedidos (todos si no
-    se indica) y "envía" la plantilla a los elegibles: registra el contacto (para
-    la regla de 3 días), el mensaje en la conversación visible y la campaña."""
-    ahora = ahora or ahora_panama()
-    pedidos = segmentos or list(ACCIONES)
-    campana_id = f"CMP-{ahora:%Y%m%d}-{store.contar('campanas') + 1:04d}"
-    resultados = []
-    for cid, c in clientes.items():
-        if (segmento := segmentar(c)) not in pedidos:
+def run_campaign(customers: dict, store, segments: list[str] | None = None,
+                 now: datetime | None = None, force_hours: bool = False) -> dict:
+    """Evaluates the rules for each customer in the requested segments (all if none
+    given) and "sends" the template to the eligible ones: records the contact (for
+    the 3-day rule), the message in the visible conversation, and the campaign."""
+    now = now or panama_now()
+    requested = segments or list(ACTIONS)
+    campaign_id = f"CMP-{now:%Y%m%d}-{store.count('campaigns') + 1:04d}"
+    results = []
+    for cid, c in customers.items():
+        if (segment := segment_of(c)) not in requested:
             continue
-        fila = {"cliente_id": cid, "nombre": c["nombre"], "segmento": segmento}
-        if supresion := motivo_supresion(c, store, ahora, forzar_horario):
-            resultados.append({**fila, "estado": "suprimido", "motivo": supresion[0], "detalle": supresion[1]})
+        row = {"customer_id": cid, "name": c["name"], "segment": segment}
+        if suppression := suppression_reason(c, store, now, force_hours):
+            results.append({**row, "status": "suppressed", "reason": suppression[0], "detail": suppression[1]})
             continue
-        texto = PLANTILLA["texto"].replace("{{1}}", c["nombre"].split()[0])
-        store.guardar("contactos", {"cliente_id": cid, "campana_id": campana_id, "canal": "whatsapp",
-                                    "fecha": ahora.isoformat(timespec="minutes"),
-                                    "plantilla": PLANTILLA["nombre"]})
-        store.guardar("conversacion", {"cliente_id": cid, "rol": "campana", "texto": texto,
-                                       "plantilla": PLANTILLA["nombre"], "campana_id": campana_id})
-        auditar("plantilla_enviada", cid, campana_id=campana_id, plantilla=PLANTILLA["nombre"], texto=texto)
-        resultados.append({**fila, "estado": "enviado", "texto": texto})
-    por_motivo: dict[str, int] = {}
-    for r in resultados:
-        if r["estado"] == "suprimido":
-            por_motivo[r["motivo"]] = por_motivo.get(r["motivo"], 0) + 1
-    resumen = {"enviados": sum(r["estado"] == "enviado" for r in resultados),
-               "suprimidos": sum(por_motivo.values()), "por_motivo": por_motivo}
-    campana = {"campana_id": campana_id, "ejecutada": ahora.replace(tzinfo=None).isoformat(timespec="seconds"),
-               "plantilla": PLANTILLA["nombre"], "segmentos": pedidos, "forzar_horario": forzar_horario,
-               "resumen": resumen}
-    store.guardar("campanas", {"cliente_id": SISTEMA, **campana})
-    auditar("campana", SISTEMA, **campana)  # forzar_horario queda en la auditoría
-    return {**campana, "resultados": resultados}
+        text = TEMPLATE["text"].replace("{{1}}", c["name"].split()[0])
+        store.save("contacts", {"customer_id": cid, "campaign_id": campaign_id, "channel": "whatsapp",
+                                "date": now.isoformat(timespec="minutes"), "template": TEMPLATE["name"]})
+        store.save("conversation", {"customer_id": cid, "role": "campaign", "text": text,
+                                    "template": TEMPLATE["name"], "campaign_id": campaign_id})
+        audit("template_sent", cid, campaign_id=campaign_id, template=TEMPLATE["name"], text=text)
+        results.append({**row, "status": "sent", "text": text})
+    by_reason: dict[str, int] = {}
+    for r in results:
+        if r["status"] == "suppressed":
+            by_reason[r["reason"]] = by_reason.get(r["reason"], 0) + 1
+    summary = {"sent": sum(r["status"] == "sent" for r in results),
+               "suppressed": sum(by_reason.values()), "by_reason": by_reason}
+    campaign = {"campaign_id": campaign_id, "executed_at": now.replace(tzinfo=None).isoformat(timespec="seconds"),
+                "template": TEMPLATE["name"], "segments": requested, "force_hours": force_hours,
+                "summary": summary}
+    store.save("campaigns", {"customer_id": SYSTEM, **campaign})
+    audit("campaign", SYSTEM, **campaign)  # force_hours stays in the audit trail
+    return {**campaign, "results": results}

@@ -1,12 +1,13 @@
-"""El 'cerebro' detrás de una interfaz mínima: crear(system, messages, tools).
+"""The 'brain' behind a minimal interface: create(system, messages, tools).
 
-Tres implementaciones con la MISMA interfaz (bloques de contenido estilo
-Messages API: text / tool_use), así el agente, las tools y los guardrails no
-saben ni les importa quién decide:
-- ClaudeLLM(bedrock=False): Claude API con la SDK oficial de Anthropic.
-- ClaudeLLM(bedrock=True):  Amazon Bedrock (la ruta de producción en AWS).
-- MockLLM: motor de reglas determinístico para correr sin credenciales. NO es
-  un LLM: imita sus decisiones para que la demo sea reproducible."""
+Three implementations with the SAME interface (Messages API-style content
+blocks: text / tool_use), so the agent, the tools and the guardrails neither
+know nor care who decides:
+- ClaudeLLM(bedrock=False): Claude API with the official Anthropic SDK.
+- ClaudeLLM(bedrock=True):  Amazon Bedrock (the production path on AWS).
+- MockLLM: deterministic rule engine to run without credentials. It is NOT
+  an LLM: it imitates its decisions so the demo is reproducible. It parses the
+  customer's Spanish and replies in Spanish, like the real agent."""
 import json
 import re
 import uuid
@@ -16,198 +17,198 @@ from datetime import date, timedelta
 import anthropic
 
 from . import config
-from .tools import texto_escalamiento
+from .tools import escalation_text
 
 
 @dataclass
-class Respuesta:
-    contenido: list[dict]
+class Response:
+    content: list[dict]
     stop_reason: str
 
 
 class ClaudeLLM:
     def __init__(self, bedrock: bool = False):
-        # Timeout por llamada: en AWS el HTTP API corta a los 30 s, así que conviene
-        # fallar rápido y que el orquestador escale, en vez de dejar al cliente sin respuesta.
-        # max_retries=3: la cuenta de demo tiene un límite de 10 requests/min en Bedrock;
-        # la SDK reintenta con backoff exponencial los 429 (RateLimitError).
-        opciones = {"timeout": config.TIMEOUT_LLM_S, "max_retries": 3}
+        # Per-call timeout: on AWS the HTTP API cuts off at 30 s, so it's better to
+        # fail fast and let the orchestrator escalate than leave the customer without a reply.
+        # max_retries=3: the demo account has a 10 requests/min limit on Bedrock;
+        # the SDK retries 429s (RateLimitError) with exponential backoff.
+        options = {"timeout": config.LLM_TIMEOUT_S, "max_retries": 3}
         if bedrock:
-            # bedrock-runtime InvokeModel firmado con IAM (el rol de la Lambda). Se usa
-            # este cliente y no AnthropicBedrockMantle porque acepta los inference
-            # profiles cross-region (us.anthropic.*) habilitados en la cuenta y se
-            # autoriza con bedrock:InvokeModel, la acción IAM estándar.
-            self.cliente = anthropic.AnthropicBedrock(aws_region=config.REGION_AWS, **opciones)
-            self.modelo, self.etiqueta = config.MODELO_BEDROCK, f"Amazon Bedrock · {config.MODELO_BEDROCK}"
+            # bedrock-runtime InvokeModel signed with IAM (the Lambda role). This client is
+            # used instead of AnthropicBedrockMantle because it accepts the cross-region
+            # inference profiles (us.anthropic.*) enabled on the account and is authorized
+            # with bedrock:InvokeModel, the standard IAM action.
+            self.client = anthropic.AnthropicBedrock(aws_region=config.AWS_REGION, **options)
+            self.model, self.label = config.BEDROCK_MODEL, f"Amazon Bedrock · {config.BEDROCK_MODEL}"
         else:
-            self.cliente = anthropic.Anthropic(**opciones)
-            self.modelo, self.etiqueta = config.MODELO, f"Claude API · {config.MODELO}"
-        self.extra = {"output_config": {"effort": config.ESFUERZO}}
+            self.client = anthropic.Anthropic(**options)
+            self.model, self.label = config.MODEL, f"Claude API · {config.MODEL}"
+        self.extra = {"output_config": {"effort": config.EFFORT}}
 
-    def crear(self, system: str, messages: list[dict], tools: list[dict]) -> Respuesta:
+    def create(self, system: str, messages: list[dict], tools: list[dict]) -> Response:
         try:
-            r = self.cliente.messages.create(model=self.modelo, max_tokens=8000, system=system,
-                                             tools=tools, messages=messages, **self.extra)
+            r = self.client.messages.create(model=self.model, max_tokens=8000, system=system,
+                                            tools=tools, messages=messages, **self.extra)
         except anthropic.BadRequestError as exc:
             if not self.extra or ("output_config" not in str(exc) and "effort" not in str(exc)):
                 raise
-            # Degradación elegante: si el endpoint/modelo no acepta `effort`, se
-            # sigue con el esfuerzo por defecto del modelo en vez de escalar todo.
+            # Graceful degradation: if the endpoint/model doesn't accept `effort`, carry
+            # on with the model's default effort instead of escalating everything.
             self.extra = {}
-            return self.crear(system, messages, tools)
-        # Se devuelve el contenido completo (incluye bloques de thinking) para
-        # reenviarlo intacto en el siguiente request, como exige la API.
-        return Respuesta([b.model_dump(exclude_none=True) for b in r.content], r.stop_reason)
+            return self.create(system, messages, tools)
+        # The full content is returned (including thinking blocks) so it can be sent
+        # back intact in the next request, as the API requires.
+        return Response([b.model_dump(exclude_none=True) for b in r.content], r.stop_reason)
 
 
-def crear_llm():
-    """Elige el cerebro según config.proveedor() (LLM_PROVIDER / ANTHROPIC_API_KEY)."""
-    p = config.proveedor()
+def create_llm():
+    """Picks the brain according to config.provider() (LLM_PROVIDER / ANTHROPIC_API_KEY)."""
+    p = config.provider()
     return MockLLM() if p == "mock" else ClaudeLLM(bedrock=(p == "bedrock"))
 
 
-# ---------------------------------------------------------------- modo offline
+# ---------------------------------------------------------------- offline mode
 @dataclass
-class _Llamada:
-    nombre: str
-    entrada: dict
-    resultado: dict
+class _Call:
+    name: str
+    input: dict
+    result: dict
 
 
-DIAS = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+WEEKDAYS_ES = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 
 
-def _monto(t: str) -> float | None:
+def _amount(t: str) -> float | None:
     m = re.search(r"(?:\$|usd|b/\.)\s?(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:dolares|balboas)", t)
     return float(m.group(1) or m.group(2)) if m else None
 
 
-def _fecha(t: str, hoy: date) -> date | None:
+def _date(t: str, today: date) -> date | None:
     if m := re.search(r"en (\d+) dias", t):
-        return hoy + timedelta(days=int(m.group(1)))
+        return today + timedelta(days=int(m.group(1)))
     if m := re.search(r"\d{4}-\d{2}-\d{2}", t):
         return date.fromisoformat(m.group(0))
     if "manana" in t:
-        return hoy + timedelta(days=1)
-    for i, dia in enumerate(DIAS):
-        if f"el {dia}" in t:
-            return hoy + timedelta(days=(i - hoy.weekday()) % 7 or 7)
+        return today + timedelta(days=1)
+    for i, day in enumerate(WEEKDAYS_ES):
+        if f"el {day}" in t:
+            return today + timedelta(days=(i - today.weekday()) % 7 or 7)
     return None
 
 
 class MockLLM:
-    etiqueta = "OFFLINE · motor de reglas determinístico (sin LLM, sin red)"
+    label = "OFFLINE · motor de reglas determinístico (sin LLM, sin red)"
 
-    def crear(self, system: str, messages: list[dict], tools: list[dict]) -> Respuesta:
-        decision = self._decidir(*self._leer(messages))
+    def create(self, system: str, messages: list[dict], tools: list[dict]) -> Response:
+        decision = self._decide(*self._read(messages))
         if isinstance(decision, str):
-            return Respuesta([{"type": "text", "text": decision}], "end_turn")
-        nombre, entrada = decision
-        bloque = {"type": "tool_use", "id": f"toolu_mock_{uuid.uuid4().hex[:10]}",
-                  "name": nombre, "input": entrada}
-        return Respuesta([bloque], "tool_use")
+            return Response([{"type": "text", "text": decision}], "end_turn")
+        name, tool_input = decision
+        block = {"type": "tool_use", "id": f"toolu_mock_{uuid.uuid4().hex[:10]}",
+                 "name": name, "input": tool_input}
+        return Response([block], "tool_use")
 
     @staticmethod
-    def _leer(messages: list[dict]):
-        """Reconstruye lo que un LLM 'vería': último texto del cliente, nota de
-        contexto del sistema, y todas las tools ya ejecutadas (con su resultado)."""
-        from .guardrails import normalizar
-        usos, llamadas, inicio_turno, texto, contexto = {}, [], 0, "", {}
+    def _read(messages: list[dict]):
+        """Rebuilds what an LLM would 'see': the customer's last text, the system
+        context note, and every tool already executed (with its result)."""
+        from .guardrails import normalize
+        uses, calls, turn_start, text, context = {}, [], 0, "", {}
         for msg in messages:
             for b in msg["content"]:
                 if b["type"] == "tool_use":
-                    usos[b["id"]] = b
+                    uses[b["id"]] = b
                 elif b["type"] == "tool_result":
-                    u = usos[b["tool_use_id"]]
-                    llamadas.append(_Llamada(u["name"], u["input"], json.loads(b["content"])))
-            textos = [b["text"] for b in msg["content"] if b["type"] == "text"]
-            if msg["role"] == "user" and textos:
-                contexto = dict(re.findall(r"(\w+)=([^;\]]+)", textos[0]))
-                texto, inicio_turno = normalizar(textos[-1]), len(llamadas)
-        return texto, contexto, llamadas, llamadas[inicio_turno:]
+                    u = uses[b["tool_use_id"]]
+                    calls.append(_Call(u["name"], u["input"], json.loads(b["content"])))
+            texts = [b["text"] for b in msg["content"] if b["type"] == "text"]
+            if msg["role"] == "user" and texts:
+                context = dict(re.findall(r"(\w+)=([^;\]]+)", texts[0]))
+                text, turn_start = normalize(texts[-1]), len(calls)
+        return text, context, calls, calls[turn_start:]
 
-    def _decidir(self, texto, ctx, llamadas, del_turno):
-        cid = ctx["cliente_id"]
-        ultima = del_turno[-1] if del_turno else None
-        if ultima and ultima.nombre == "escalar_a_humano" and ultima.resultado["ok"]:
-            return texto_escalamiento(ultima.resultado)
-        if motivo := ctx.get("escalamiento_obligatorio"):
-            return self._escalar(cid, motivo, texto)
-        if ctx.get("identidad_verificada") != "si":
+    def _decide(self, text, ctx, calls, this_turn):
+        cid = ctx["customer_id"]
+        last = this_turn[-1] if this_turn else None
+        if last and last.name == "escalate_to_human" and last.result["ok"]:
+            return escalation_text(last.result)
+        if reason := ctx.get("mandatory_escalation"):
+            return self._escalate(cid, reason, text)
+        if ctx.get("identity_verified") != "yes":
             return ("Hola, soy el asistente virtual de LLA. Para proteger tus datos, "
                     "¿me confirmas los últimos 4 dígitos de tu cédula?")
-        hechos = {c.nombre: c.resultado for c in llamadas if c.resultado["ok"]}
-        for lectura in ("consultar_saldo", "consultar_historial"):
-            if lectura not in hechos:
-                return lectura, {"cliente_id": cid}
-        cuenta = hechos["consultar_saldo"]
-        if ultima and ultima.nombre not in ("consultar_saldo", "consultar_historial"):
-            return self._reaccionar(cid, ultima, llamadas, cuenta, texto)
-        if cuenta["segmento"] in ("en_disputa", "alto_valor_b2b"):
-            motivo = "disputa" if cuenta["segmento"] == "en_disputa" else "alto_valor_b2b"
-            return self._escalar(cid, motivo, texto)
-        return self._intencion(cid, texto, cuenta, date.fromisoformat(ctx["fecha_hoy"]))
+        facts = {c.name: c.result for c in calls if c.result["ok"]}
+        for lookup in ("get_balance", "get_history"):
+            if lookup not in facts:
+                return lookup, {"customer_id": cid}
+        account = facts["get_balance"]
+        if last and last.name not in ("get_balance", "get_history"):
+            return self._react(cid, last, calls, account, text)
+        if account["segment"] in ("in_dispute", "high_value_b2b"):
+            reason = "dispute" if account["segment"] == "in_dispute" else "high_value_b2b"
+            return self._escalate(cid, reason, text)
+        return self._intent(cid, text, account, date.fromisoformat(ctx["today"]))
 
     @staticmethod
-    def _escalar(cid, motivo, texto):
-        return "escalar_a_humano", {"cliente_id": cid, "motivo": motivo,
-                                    "resumen": f"Motivo: {motivo}. Último mensaje del cliente: '{texto[:160]}'"}
+    def _escalate(cid, reason, text):
+        return "escalate_to_human", {"customer_id": cid, "reason": reason,
+                                     "summary": f"Reason: {reason}. Customer's last message: '{text[:160]}'"}
 
-    def _intencion(self, cid, texto, cuenta, hoy):
-        """Mapea lo que pide el cliente a UNA tool. La tool decide si se puede."""
-        saldo = cuenta["saldo_vencido"]
-        if m := re.search(r"(\d+)\s*cuotas", texto):
-            return "ofrecer_acuerdo_pago", {"cliente_id": cid, "cuotas": int(m.group(1))}
-        if re.search(r"acuerdo|en partes|cuotas", texto):
-            return "ofrecer_acuerdo_pago", {"cliente_id": cid, "cuotas": 3}
-        if fecha := _fecha(texto, hoy):
-            return "registrar_promesa_pago", {"cliente_id": cid, "monto": _monto(texto) or saldo,
-                                              "fecha": str(fecha)}
-        if re.search(r"pagar|pago|link|enlace", texto):
-            return "generar_link_pago", {"cliente_id": cid, "monto": _monto(texto) or saldo}
-        if re.search(r"gracias|listo|perfecto", texto):
+    def _intent(self, cid, text, account, today):
+        """Maps what the customer asks for to ONE tool. The tool decides if it's allowed."""
+        balance = account["overdue_balance"]
+        if m := re.search(r"(\d+)\s*cuotas", text):
+            return "offer_payment_plan", {"customer_id": cid, "installments": int(m.group(1))}
+        if re.search(r"acuerdo|en partes|cuotas", text):
+            return "offer_payment_plan", {"customer_id": cid, "installments": 3}
+        if day := _date(text, today):
+            return "register_payment_promise", {"customer_id": cid, "amount": _amount(text) or balance,
+                                                "date": str(day)}
+        if re.search(r"pagar|pago|link|enlace", text):
+            return "create_payment_link", {"customer_id": cid, "amount": _amount(text) or balance}
+        if re.search(r"gracias|listo|perfecto", text):
             return "¡Gracias a ti! Si necesitas algo más, escríbeme por aquí. Que tengas buen día."
-        opciones = {"generar_link_pago": "pagar ahora con un link seguro",
-                    "registrar_promesa_pago": "acordar una fecha de pago (hasta 15 días)",
-                    "ofrecer_acuerdo_pago": "dividirlo en 2 o 3 cuotas"}
-        lista = "; ".join(opciones[a] for a in cuenta["acciones_permitidas"] if a in opciones)
-        return (f"Gracias, {cuenta['nombre']}. Tienes un saldo vencido de USD {saldo:.2f} "
-                f"con {cuenta['dias_mora']} días de atraso. Puedo ayudarte a: {lista}. ¿Qué prefieres?")
+        options = {"create_payment_link": "pagar ahora con un link seguro",
+                   "register_payment_promise": "acordar una fecha de pago (hasta 15 días)",
+                   "offer_payment_plan": "dividirlo en 2 o 3 cuotas"}
+        listing = "; ".join(options[a] for a in account["allowed_actions"] if a in options)
+        return (f"Gracias, {account['name']}. Tienes un saldo vencido de USD {balance:.2f} "
+                f"con {account['days_past_due']} días de atraso. Puedo ayudarte a: {listing}. ¿Qué prefieres?")
 
-    def _reaccionar(self, cid, ultima, llamadas, cuenta, texto):
-        """Respuesta al resultado de la tool que se acaba de ejecutar."""
-        r = ultima.resultado
+    def _react(self, cid, last, calls, account, text):
+        """Reply to the result of the tool that was just executed."""
+        r = last.result
         if r["ok"]:
-            if ultima.nombre == "generar_link_pago":
-                return (f"Listo. Aquí tienes tu link para pagar USD {r['monto']:.2f}: {r['url']} "
-                        f"(válido hasta {r['vence']}). Tu servicio se normaliza al confirmarse el pago.")
-            if ultima.nombre == "registrar_promesa_pago":
-                return (f"Perfecto, registré tu compromiso de pagar USD {r['monto']:.2f} el {r['fecha']}. "
+            if last.name == "create_payment_link":
+                return (f"Listo. Aquí tienes tu link para pagar USD {r['amount']:.2f}: {r['url']} "
+                        f"(válido hasta {r['expires_on']}). Tu servicio se normaliza al confirmarse el pago.")
+            if last.name == "register_payment_promise":
+                return (f"Perfecto, registré tu compromiso de pagar USD {r['amount']:.2f} el {r['date']}. "
                         f"Te enviaré un recordatorio ese día. ¡Gracias por tu disposición!")
-            cuotas = ", ".join(f"USD {c['monto']:.2f} el {c['fecha']}" for c in r["plan"])
-            return f"Listo, tu acuerdo quedó registrado en {len(r['plan'])} cuotas: {cuotas}."
-        codigo = r["error"]["codigo"]
-        rechazos = sum(not c.resultado["ok"] and c.resultado["error"]["codigo"] in
-                       ("CUOTAS_NO_PERMITIDAS", "ACUERDO_NO_DISPONIBLE", "ACCION_NO_PERMITIDA_SEGMENTO")
-                       for c in llamadas)
-        if codigo in ("CLIENTE_EN_DISPUTA", "REQUIERE_EJECUTIVO"):
-            return self._escalar(cid, "disputa" if codigo == "CLIENTE_EN_DISPUTA" else "alto_valor_b2b", texto)
-        if rechazos >= 2:  # el cliente insiste en algo que la política no permite
-            return self._escalar(cid, "politica_no_permite", texto)
-        if codigo == "FECHA_FUERA_DE_POLITICA":
+            installments = ", ".join(f"USD {i['amount']:.2f} el {i['date']}" for i in r["plan"])
+            return f"Listo, tu acuerdo quedó registrado en {len(r['plan'])} cuotas: {installments}."
+        code = r["error"]["code"]
+        rejections = sum(not c.result["ok"] and c.result["error"]["code"] in
+                         ("INSTALLMENTS_NOT_ALLOWED", "PLAN_NOT_AVAILABLE", "ACTION_NOT_ALLOWED_FOR_SEGMENT")
+                         for c in calls)
+        if code in ("CUSTOMER_IN_DISPUTE", "REQUIRES_EXECUTIVE"):
+            return self._escalate(cid, "dispute" if code == "CUSTOMER_IN_DISPUTE" else "high_value_b2b", text)
+        if rejections >= 2:  # the customer insists on something policy doesn't allow
+            return self._escalate(cid, "policy_not_allowed", text)
+        if code == "DATE_OUTSIDE_POLICY":
             e = r["error"]
-            return (f"Entiendo. Puedo registrar tu compromiso con fecha máxima {e['fecha_maxima']}: "
-                    f"por el total (USD {e['saldo_vencido']:.2f}) o un abono desde "
-                    f"USD {e['monto_minimo_parcial']:.2f}. ¿Qué monto y fecha te funcionan?")
-        if codigo == "MONTO_FUERA_DE_POLITICA":
-            return (f"Para un abono parcial el mínimo es USD {r['error']['monto_minimo_parcial']:.2f}. "
+            return (f"Entiendo. Puedo registrar tu compromiso con fecha máxima {e['max_date']}: "
+                    f"por el total (USD {e['overdue_balance']:.2f}) o un abono desde "
+                    f"USD {e['min_partial_amount']:.2f}. ¿Qué monto y fecha te funcionan?")
+        if code == "AMOUNT_OUTSIDE_POLICY":
+            return (f"Para un abono parcial el mínimo es USD {r['error']['min_partial_amount']:.2f}. "
                     f"¿Te funciona ese monto?")
-        if codigo in ("ACUERDO_NO_DISPONIBLE", "ACCION_NO_PERMITIDA_SEGMENTO"):
-            return (f"{cuenta['nombre']}, en tu caso no puedo ofrecer un acuerdo en cuotas. Lo que sí "
+        if code in ("PLAN_NOT_AVAILABLE", "ACTION_NOT_ALLOWED_FOR_SEGMENT"):
+            return (f"{account['name']}, en tu caso no puedo ofrecer un acuerdo en cuotas. Lo que sí "
                     f"puedo hacer hoy es enviarte un link para pagar el total de USD "
-                    f"{cuenta['saldo_vencido']:.2f} y reactivar tu servicio. ¿Te lo envío?")
-        if codigo == "CUOTAS_NO_PERMITIDAS":
+                    f"{account['overdue_balance']:.2f} y reactivar tu servicio. ¿Te lo envío?")
+        if code == "INSTALLMENTS_NOT_ALLOWED":
             return "Puedo ofrecerte el saldo en 2 o 3 cuotas. ¿Cuál prefieres?"
-        if codigo == "PROMESA_ACTIVA_EXISTENTE":
+        if code == "ACTIVE_PROMISE_EXISTS":
             return "Ya tienes un compromiso de pago activo; te recordaré la fecha acordada."
-        return self._escalar(cid, "sin_resolucion", texto)  # error inesperado: mejor un humano
+        return self._escalate(cid, "unresolved", text)  # unexpected error: better a human

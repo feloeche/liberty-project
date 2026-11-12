@@ -1,9 +1,9 @@
-# Empaquetado de la Lambda. Por qué un paso propio y no el builder de SAM:
-# las dependencias nativas (pydantic-core, jiter) deben ser wheels Linux ARM64,
-# y `uv` las baja para esa plataforma desde macOS sin Docker.
-# boto3/botocore NO se empaquetan: ya vienen en el runtime python3.12 de Lambda.
-# No se usa `sam build`: su copia omitía el binario de pydantic_core y la Lambda
-# fallaba al importar. `sam deploy --template-file template.yaml` empaqueta .build/app tal cual.
+# Lambda packaging. Why a custom step instead of the SAM builder:
+# native dependencies (pydantic-core, jiter) must be Linux ARM64 wheels,
+# and `uv` downloads them for that platform from macOS without Docker.
+# boto3/botocore are NOT packaged: they already ship with Lambda's python3.12 runtime.
+# `sam build` is not used: its copy skipped the pydantic_core binary and the Lambda
+# failed on import. `sam deploy --template-file template.yaml` packages .build/app as is.
 APP := .build/app
 
 .PHONY: build validate clean

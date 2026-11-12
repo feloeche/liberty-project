@@ -3,23 +3,23 @@
 __pycache__/
 .pytest_cache/
 
-# Estado local del prototipo (store.json y audit.jsonl de las corridas)
+# Local prototype state (store.json and audit.jsonl from runs)
 prototype/var/
 
-# Secretos: nunca al repo
+# Secrets: never in the repo
 .env
 prototype/infra/.demo-token
 
-# Artefactos de empaquetado y despliegue (se regeneran con `make build`)
+# Packaging and deployment artifacts (regenerated with `make build`)
 prototype/infra/.build/
 prototype/infra/.aws-sam/
 
 # macOS
 .DS_Store
 
-# Capturas y logs de las pruebas de navegador (Playwright MCP)
+# Screenshots and logs from browser tests (Playwright MCP)
 .playwright-mcp/
 
-# Material personal de preparación y copia del enunciado: no forman parte del entregable
+# Personal prep material and a copy of the brief: not part of the deliverable
 preparacion/
 reference/

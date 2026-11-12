@@ -1,12 +1,12 @@
-"""Orquestador: un turno de WhatsApp de punta a punta.
+"""Orchestrator: one WhatsApp turn end to end.
 
-Flujo por mensaje entrante:
-  1. Verificación de identidad (código, no LLM).
-  2. Guardrail de entrada -> ¿escalamiento obligatorio?
-  3. Loop de tool use: el modelo decide qué tool llamar hasta dar una respuesta final.
-  4. Garantía de escalamiento: si una regla lo exigía y el modelo no escaló, escala el código.
-  5. Guardrail de salida -> si el mensaje falla, se envía un mensaje seguro y se escala.
-En producción esto es una Lambda / AgentCore Runtime disparada desde SQS FIFO."""
+Flow per inbound message:
+  1. Identity verification (code, not the LLM).
+  2. Input guardrail -> mandatory escalation?
+  3. Tool-use loop: the model decides which tool to call until it gives a final answer.
+  4. Escalation guarantee: if a rule required it and the model didn't escalate, code escalates.
+  5. Output guardrail -> if the message fails, a safe message is sent and the case is escalated.
+In production this is a Lambda / AgentCore Runtime triggered from SQS FIFO."""
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Callable
@@ -14,170 +14,172 @@ from typing import Callable
 import anthropic
 
 from . import config, guardrails, tools
-from .store import Store, auditar
+from .store import Store, audit
+
+SYSTEM_TAG = "[SYSTEM CONTEXT, not written by the customer]"
 
 
 @dataclass
-class Sesion:
-    """Memoria de la conversación (en producción: un ítem en DynamoDB con TTL)."""
-    cliente_id: str
-    verificado: bool = False
-    insultos: int = 0
-    caso: dict | None = None  # se llena al escalar; a partir de ahí responde el humano
-    mensajes: list[dict] = field(default_factory=list)
-    montos_validos: set[float] = field(default_factory=set)
+class Session:
+    """Conversation memory (in production: a DynamoDB item with TTL)."""
+    customer_id: str
+    verified: bool = False
+    insults: int = 0
+    case: dict | None = None  # filled on escalation; from then on a human replies
+    messages: list[dict] = field(default_factory=list)
+    valid_amounts: set[float] = field(default_factory=set)
 
-    def a_dict(self) -> dict:
-        """JSON-serializable: en AWS la Lambda es stateless y la sesión viaja a
-        DynamoDB entre turnos (un set no es JSON, por eso va como lista)."""
-        return {**asdict(self), "montos_validos": sorted(self.montos_validos)}
+    def to_dict(self) -> dict:
+        """JSON-serializable: on AWS the Lambda is stateless and the session travels to
+        DynamoDB between turns (a set is not JSON, so it goes as a list)."""
+        return {**asdict(self), "valid_amounts": sorted(self.valid_amounts)}
 
     @classmethod
-    def de_dict(cls, d: dict) -> "Sesion":
-        return cls(**{**d, "montos_validos": set(d.get("montos_validos", []))})
+    def from_dict(cls, d: dict) -> "Session":
+        return cls(**{**d, "valid_amounts": set(d.get("valid_amounts", []))})
 
 
 @dataclass
-class Turno:
-    respuesta: str
-    decision: str  # "GESTIONA" | "ESCALA"
+class Turn:
+    reply: str
+    decision: str  # "HANDLED" | "ESCALATED"
 
 
-class Agente:
-    def __init__(self, llm, store: Store, clientes: dict[str, dict],
-                 al_evento: Callable[[dict], None] = lambda e: None):
-        self.llm, self.store, self.clientes, self.al_evento = llm, store, clientes, al_evento
-        self.system = config.RUTA_PROMPT.read_text(encoding="utf-8")
-        self.sesiones: dict[str, Sesion] = {}
+class Agent:
+    def __init__(self, llm, store: Store, customers: dict[str, dict],
+                 on_event: Callable[[dict], None] = lambda e: None):
+        self.llm, self.store, self.customers, self.on_event = llm, store, customers, on_event
+        self.system = config.PROMPT_PATH.read_text(encoding="utf-8")
+        self.sessions: dict[str, Session] = {}
 
-    def responder(self, cliente_id: str, texto: str) -> Turno:
-        s = self.sesiones.setdefault(cliente_id, Sesion(cliente_id))
-        auditar("mensaje_entrante", cliente_id, texto=texto)
-        plantilla = self._plantilla_respondida(s)  # antes de anotar el mensaje del cliente
-        self.store.guardar("conversacion", {"cliente_id": cliente_id, "rol": "cliente", "texto": texto})
-        if s.caso:  # ya hay un humano a cargo: el bot no vuelve a cobrar
-            return self._cerrar(s, f"Tu caso {s.caso['caso_id']} ya está con un asesor; te escribirá pronto.")
+    def respond(self, customer_id: str, text: str) -> Turn:
+        s = self.sessions.setdefault(customer_id, Session(customer_id))
+        audit("inbound_message", customer_id, text=text)
+        template = self._answered_template(s)  # before logging the customer's message
+        self.store.save("conversation", {"customer_id": customer_id, "role": "customer", "text": text})
+        if s.case:  # a human is already in charge: the bot does not collect again
+            return self._close(s, f"Tu caso {s.case['case_id']} ya está con un asesor; te escribirá pronto.")
 
-        if plantilla:
-            s.mensajes += self._apertura_por_plantilla(plantilla)
-        self._verificar(s, texto)
-        motivo = self._guardrail_entrada(s, texto)
-        s.mensajes.append({"role": "user", "content": [
-            {"type": "text", "text": self._nota_contexto(s, motivo, plantilla)}, {"type": "text", "text": texto}]})
+        if template:
+            s.messages += self._template_opening(template)
+        self._verify(s, text)
+        reason = self._input_guardrail(s, text)
+        s.messages.append({"role": "user", "content": [
+            {"type": "text", "text": self._context_note(s, reason, template)}, {"type": "text", "text": text}]})
 
-        respuesta = self._loop(s)
-        if respuesta is None:  # error de API, refusal o pasos agotados -> nunca dejar al cliente colgado
-            motivo = motivo or "sin_resolucion"
-        forzado = bool(motivo) and not s.caso
-        if forzado:
-            self._ejecutar(s, "escalar_a_humano", {"motivo": motivo, "resumen": f"Escalamiento forzado por "
-                           f"el orquestador ({motivo}). Último mensaje: '{texto[:160]}'"})
-        if forzado or respuesta is None:
-            respuesta = tools.texto_escalamiento(s.caso)
-        return self._cerrar(s, self._guardrail_salida(s, respuesta))
+        reply = self._loop(s)
+        if reply is None:  # API error, refusal or steps exhausted -> never leave the customer hanging
+            reason = reason or "unresolved"
+        forced = bool(reason) and not s.case
+        if forced:
+            self._execute(s, "escalate_to_human", {"reason": reason, "summary": f"Escalation forced by "
+                          f"the orchestrator ({reason}). Last message: '{text[:160]}'"})
+        if forced or reply is None:
+            reply = tools.escalation_text(s.case)
+        return self._close(s, self._output_guardrail(s, reply))
 
-    # -- pasos del turno ---------------------------------------------------
-    def _plantilla_respondida(self, s: Sesion) -> dict | None:
-        """Si lo último que recibió el cliente fue una plantilla de campaña, le está
-        respondiendo. La plantilla entra a la conversación del modelo como su
-        mensaje anterior (ver _apertura_por_plantilla)."""
-        conversacion = self.store.buscar("conversacion", s.cliente_id)
-        ultimo = conversacion[-1] if conversacion else None
-        if ultimo and ultimo["rol"] == "campana":
-            self._evento(s, "campana", detalle=f"El cliente responde a la plantilla {ultimo['plantilla']} "
-                                                f"({ultimo['campana_id']})")
-            return ultimo
+    # -- turn steps ---------------------------------------------------------
+    def _answered_template(self, s: Session) -> dict | None:
+        """If the last thing the customer received was a campaign template, they are
+        replying to it. The template enters the model's conversation as its own
+        previous message (see _template_opening)."""
+        conversation = self.store.find("conversation", s.customer_id)
+        last = conversation[-1] if conversation else None
+        if last and last["role"] == "campaign":
+            self._event(s, "campaign", detail=f"Customer is replying to template {last['template']} "
+                                              f"({last['campaign_id']})")
+            return last
         return None
 
     @staticmethod
-    def _apertura_por_plantilla(plantilla: dict) -> list[dict]:
-        """El modelo debe 'recordar' que ya escribió primero. Hallazgo en la demo: con
-        solo una nota de contexto, Claude volvía a saludar y presentarse, como si la
-        conversación empezara de cero. Por eso la plantilla entra como SU mensaje
-        anterior (rol assistant). La Messages API exige empezar con 'user', así que va
-        precedida de un aviso del sistema que explica de dónde salió ese mensaje."""
-        aviso = (f"[CONTEXTO DEL SISTEMA, no escrito por el cliente] LLA inició esta conversación por "
-                 f"WhatsApp con la plantilla aprobada {plantilla['plantilla']} ({plantilla['campana_id']}). "
-                 f"El siguiente mensaje del asistente es exactamente lo que recibió el cliente.")
-        return [{"role": "user", "content": [{"type": "text", "text": aviso}]},
-                {"role": "assistant", "content": [{"type": "text", "text": plantilla["texto"]}]}]
+    def _template_opening(template: dict) -> list[dict]:
+        """The model must 'remember' it wrote first. Finding in the demo: with only a
+        context note, Claude greeted and introduced itself again, as if the conversation
+        were starting from scratch. That's why the template enters as ITS previous
+        message (assistant role). The Messages API requires starting with 'user', so it
+        is preceded by a system notice explaining where that message came from."""
+        notice = (f"{SYSTEM_TAG} LLA started this conversation on WhatsApp with the approved "
+                  f"template {template['template']} ({template['campaign_id']}). "
+                  f"The next assistant message is exactly what the customer received.")
+        return [{"role": "user", "content": [{"type": "text", "text": notice}]},
+                {"role": "assistant", "content": [{"type": "text", "text": template["text"]}]}]
 
-    def _verificar(self, s: Sesion, texto: str) -> None:
-        """Verificación mínima en un paso: últimos 4 dígitos de la cédula. Es
-        proporcional al riesgo (el número de WhatsApp ya está registrado en el CRM)."""
-        ultimos4 = re.sub(r"\D", "", self.clientes[s.cliente_id]["cedula"])[-4:]
-        if not s.verificado and ultimos4 in re.findall(r"\b\d{4}\b", texto):
-            s.verificado = True
-            self._evento(s, "verificacion", detalle="identidad verificada (últimos 4 dígitos de la cédula)")
+    def _verify(self, s: Session, text: str) -> None:
+        """Minimal one-step verification: last 4 digits of the national ID. It is
+        proportional to the risk (the WhatsApp number is already registered in the CRM)."""
+        last4 = re.sub(r"\D", "", self.customers[s.customer_id]["national_id"])[-4:]
+        if not s.verified and last4 in re.findall(r"\b\d{4}\b", text):
+            s.verified = True
+            self._event(s, "verification", detail="identity verified (last 4 digits of the national ID)")
 
-    def _guardrail_entrada(self, s: Sesion, texto: str) -> str | None:
-        motivo = guardrails.revisar_entrada(texto)
-        if guardrails.es_insulto(texto):
-            s.insultos += 1
-            motivo = motivo or ("legal_o_insultos" if s.insultos >= 2 else None)  # 'persistentes' = 2+
-        if motivo:
-            self._evento(s, "guardrail", detalle=f"entrada -> escalamiento obligatorio: {motivo}")
-        return motivo
+    def _input_guardrail(self, s: Session, text: str) -> str | None:
+        reason = guardrails.check_input(text)
+        if guardrails.is_insult(text):
+            s.insults += 1
+            reason = reason or ("legal_or_abuse" if s.insults >= 2 else None)  # 'persistent' = 2+
+        if reason:
+            self._event(s, "guardrail", detail=f"input -> mandatory escalation: {reason}")
+        return reason
 
-    def _nota_contexto(self, s: Sesion, motivo: str | None, plantilla: dict | None = None) -> str:
-        """Hechos que el modelo necesita y que vienen del sistema, no del cliente.
-        Va en un bloque separado para que el texto del cliente no pueda suplantarlo
-        (y aunque lo hiciera, las tools validan contra la sesión, no contra la nota)."""
-        nota = (f"[CONTEXTO DEL SISTEMA, no escrito por el cliente] cliente_id={s.cliente_id}; "
-                f"identidad_verificada={'si' if s.verificado else 'no'}; fecha_hoy={config.hoy()}")
-        if plantilla:  # sin ';' ni ']' dentro del valor: así se parsea la nota
-            nota += (f"; responde_a_plantilla={plantilla['plantilla']} enviada el {plantilla['creado'][:16]}, "
-                     f"un aviso sin monto: el cliente aún no conoce el monto ni el motivo")
-        return nota + (f"; escalamiento_obligatorio={motivo}]" if motivo else "]")
+    def _context_note(self, s: Session, reason: str | None, template: dict | None = None) -> str:
+        """Facts the model needs that come from the system, not from the customer.
+        They go in a separate block so the customer's text cannot impersonate it
+        (and even if it did, the tools validate against the session, not the note)."""
+        note = (f"{SYSTEM_TAG} customer_id={s.customer_id}; "
+                f"identity_verified={'yes' if s.verified else 'no'}; today={config.today()}")
+        if template:  # no ';' or ']' inside the value: that's how the note is parsed
+            note += (f"; replying_to_template={template['template']} sent at {template['created'][:16]}, "
+                     f"a notice without amount: the customer does not know the amount or the reason yet")
+        return note + (f"; mandatory_escalation={reason}]" if reason else "]")
 
-    def _loop(self, s: Sesion) -> str | None:
-        """Loop agéntico manual (no el tool runner de la SDK) porque el mock
-        offline debe pasar por exactamente el mismo camino que Claude."""
-        for _ in range(config.POLITICA["max_pasos_por_turno"]):
+    def _loop(self, s: Session) -> str | None:
+        """Manual agentic loop (not the SDK tool runner) because the offline mock
+        must go through exactly the same path as Claude."""
+        for _ in range(config.POLICY["max_steps_per_turn"]):
             try:
-                r = self.llm.crear(self.system, s.mensajes, tools.SCHEMAS)
+                r = self.llm.create(self.system, s.messages, tools.SCHEMAS)
             except anthropic.APIError as exc:
-                self._evento(s, "error", detalle=f"falla del modelo: {type(exc).__name__}")
+                self._event(s, "error", detail=f"model failure: {type(exc).__name__}")
                 return None
-            s.mensajes.append({"role": "assistant", "content": r.contenido})
+            s.messages.append({"role": "assistant", "content": r.content})
             if r.stop_reason == "refusal":
-                self._evento(s, "error", detalle="el modelo declinó responder")
+                self._event(s, "error", detail="the model declined to answer")
                 return None
-            usos = [b for b in r.contenido if b["type"] == "tool_use"]
-            if not usos:
-                return "".join(b["text"] for b in r.contenido if b["type"] == "text").strip()
-            s.mensajes.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": u["id"], **self._ejecutar(s, u["name"], u["input"])}
-                for u in usos]})
-        self._evento(s, "error", detalle="se agotaron los pasos del turno")
+            uses = [b for b in r.content if b["type"] == "tool_use"]
+            if not uses:
+                return "".join(b["text"] for b in r.content if b["type"] == "text").strip()
+            s.messages.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": u["id"], **self._execute(s, u["name"], u["input"])}
+                for u in uses]})
+        self._event(s, "error", detail="turn steps exhausted")
         return None
 
-    def _ejecutar(self, s: Sesion, nombre: str, entrada: dict) -> dict:
-        ctx = tools.Contexto(self.clientes[s.cliente_id], self.store, config.hoy(), s.verificado)
-        resultado = tools.ejecutar(nombre, entrada, ctx)
-        s.montos_validos |= guardrails.montos_en(resultado)
-        if nombre == "escalar_a_humano" and resultado["ok"]:
-            s.caso = resultado
-        self._evento(s, "tool", nombre=nombre, entrada=entrada, resultado=resultado)
-        return {"content": tools.resultado_a_texto(resultado), "is_error": not resultado["ok"]}
+    def _execute(self, s: Session, name: str, tool_input: dict) -> dict:
+        ctx = tools.Context(self.customers[s.customer_id], self.store, config.today(), s.verified)
+        result = tools.execute(name, tool_input, ctx)
+        s.valid_amounts |= guardrails.amounts_in(result)
+        if name == "escalate_to_human" and result["ok"]:
+            s.case = result
+        self._event(s, "tool", name=name, input=tool_input, result=result)
+        return {"content": tools.result_to_text(result), "is_error": not result["ok"]}
 
-    def _guardrail_salida(self, s: Sesion, respuesta: str) -> str:
-        problemas = guardrails.revisar_salida(respuesta, s.montos_validos)
-        if not problemas:
-            return respuesta
-        self._evento(s, "guardrail", detalle=f"salida bloqueada: {'; '.join(problemas)}", original=respuesta)
-        if not s.caso:  # el mensaje seguro promete un asesor: hay que cumplirlo
-            self._ejecutar(s, "escalar_a_humano", {"motivo": "sin_resolucion",
-                                                   "resumen": f"Respuesta bloqueada por guardrail: {problemas}"})
-        return guardrails.MENSAJE_SEGURO
+    def _output_guardrail(self, s: Session, reply: str) -> str:
+        problems = guardrails.check_output(reply, s.valid_amounts)
+        if not problems:
+            return reply
+        self._event(s, "guardrail", detail=f"output blocked: {'; '.join(problems)}", original=reply)
+        if not s.case:  # the safe message promises a human agent: we must deliver
+            self._execute(s, "escalate_to_human", {"reason": "unresolved",
+                                                   "summary": f"Reply blocked by guardrail: {problems}"})
+        return guardrails.SAFE_MESSAGE
 
-    def _cerrar(self, s: Sesion, respuesta: str) -> Turno:
-        turno = Turno(respuesta, "ESCALA" if s.caso else "GESTIONA")
-        self.store.guardar("conversacion", {"cliente_id": s.cliente_id, "rol": "agente", "texto": respuesta,
-                                            "decision": turno.decision})
-        auditar("mensaje_saliente", s.cliente_id, texto=respuesta, decision=turno.decision)
-        return turno
+    def _close(self, s: Session, reply: str) -> Turn:
+        turn = Turn(reply, "ESCALATED" if s.case else "HANDLED")
+        self.store.save("conversation", {"customer_id": s.customer_id, "role": "agent", "text": reply,
+                                         "decision": turn.decision})
+        audit("outbound_message", s.customer_id, text=reply, decision=turn.decision)
+        return turn
 
-    def _evento(self, s: Sesion, tipo: str, **datos) -> None:
-        auditar(tipo, s.cliente_id, **datos)
-        self.al_evento({"tipo": tipo, **datos})
+    def _event(self, s: Session, type_: str, **data) -> None:
+        audit(type_, s.customer_id, **data)
+        self.on_event({"type": type_, **data})

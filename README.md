@@ -16,7 +16,7 @@ Este repositorio contiene mi [propuesta de arquitectura](docs/Propuesta_Arquitec
 ```bash
 cd prototype
 uv run python -m agil demo      # 5 conversaciones de punta a punta
-uv run pytest                   # 55 tests
+uv run pytest                   # 56 tests
 ```
 
 El primer comando instala las dependencias en un entorno aislado y corre cinco escenarios:
@@ -35,15 +35,15 @@ En la salida verás cada mensaje, cada herramienta que el agente invoca (⚙), l
 
 ```bash
 cd prototype
-uv run python -m agil chat --cliente C002          # conversación libre en la terminal
-uv run python -m agil campana --forzar-horario     # contacto proactivo: quién recibe aviso y quién no
+uv run python -m agil chat --customer C002         # conversación libre en la terminal
+uv run python -m agil campaign --force-hours       # contacto proactivo: quién recibe aviso y quién no
 uv run python -m agil serve --port 8000            # web en http://127.0.0.1:8000
 ```
 
 La **web local** tiene tres partes:
 - un chat tipo WhatsApp;
 - el panel **"Cómo decidió el agente"**, con cada herramienta, filtro y decisión;
-- la **consola de operación** (`/operacion`): casos escalados con cola y SLA, promesas, links, auditoría y el botón **Lanzar campaña**.
+- la **consola de operación** (`/operations`): casos escalados con cola y SLA, promesas, links, auditoría y el botón **Lanzar campaña**.
 
 Cada cliente muestra la pista de su cédula, para que puedas verificarte (los datos son ficticios).
 
@@ -74,12 +74,12 @@ Para usar Claude de verdad:
     │   ├── agent.py                   ← orquestador de un turno (verificar → filtros → ciclo de tools → escalar)
     │   ├── tools.py                   ← las 6 herramientas y sus políticas de negocio
     │   ├── guardrails.py              ← filtros antes y después del modelo
-    │   ├── campanas.py                ← contacto proactivo: elegibilidad y plantilla
+    │   ├── campaigns.py               ← contacto proactivo: elegibilidad y plantilla
     │   ├── llm.py                     ← Claude API, Bedrock o modo offline (misma interfaz)
     │   ├── api.py                     ← API HTTP: la misma función en local y en Lambda
     │   └── store.py, dynamo.py        ← estado local (JSON) o en DynamoDB
     ├── prompts/system.md              ← instrucciones del agente
-    ├── data/clientes.json             ← 7 clientes ficticios (uno por segmento)
+    ├── data/customers.json            ← 7 clientes ficticios (uno por segmento)
     ├── web/                           ← chat, panel de decisiones y consola de operación
     ├── infra/                         ← AWS SAM: Lambda, HTTP API, DynamoDB, Scheduler, IAM
     └── tests/                         ← políticas, filtros, campañas, API, DynamoDB y demo e2e
@@ -89,16 +89,16 @@ Para usar Claude de verdad:
 
 | El caso pide | Dónde está |
 |---|---|
-| ¿Cómo sabe el agente con quién hablar y qué decirle? | Propuesta §4 · `prototype/agil/campanas.py` (elegibilidad y plantilla) |
+| ¿Cómo sabe el agente con quién hablar y qué decirle? | Propuesta §4 · `prototype/agil/campaigns.py` (elegibilidad y plantilla) |
 | ¿Cómo funciona por dentro: razona, qué puede y qué no, memoria? | Propuesta §5 · `agent.py`, `tools.py`, `prompts/system.md` |
 | ¿Cómo se integra con los sistemas existentes? | Propuesta §6 · `tools.py` (lectura/escritura), `dynamo.py` |
-| ¿Cómo se gestiona y controla: campañas, reglas? | Propuesta §7 · consola de operación y `config.POLITICA` |
+| ¿Cómo se gestiona y controla: campañas, reglas? | Propuesta §7 · consola de operación y `config.POLICY` |
 | ¿Qué puede salir mal y cómo se mitiga? | Propuesta §9 (14 riesgos) · `guardrails.py` y los tests |
 | ¿Cómo sabes si funciona: métricas? | Propuesta §10 y §11 (grupo de control, evals) |
 | 100 % AWS, con justificación de cada servicio | Propuesta §3 y §12 · `prototype/infra/template.yaml` |
 | Agentes de IA, no un árbol de decisiones | Ciclo de tool use con Claude (`agent.py`, `llm.py`) |
 | Flujo mínimo: mensaje simulado → saldo → gestionar o escalar | `uv run python -m agil demo` |
-| Al menos una herramienta (tool use) | 6 herramientas: `consultar_saldo`, `consultar_historial`, `generar_link_pago`, `registrar_promesa_pago`, `ofrecer_acuerdo_pago`, `escalar_a_humano` |
+| Al menos una herramienta (tool use) | 6 herramientas: `get_balance`, `get_history`, `create_payment_link`, `register_payment_promise`, `offer_payment_plan`, `escalate_to_human` |
 | README ejecutable | Este archivo: tres comandos y ninguna credencial |
 
 ## Supuestos y límites del prototipo

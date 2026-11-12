@@ -1,50 +1,50 @@
-"""Configuración central. Todo se lee de variables de entorno para que el mismo
-código corra en local (offline), contra la Claude API o contra Amazon Bedrock
-sin tocar una línea: en producción estas variables vendrían de AppConfig /
+"""Central configuration. Everything is read from environment variables so the same
+code runs locally (offline), against the Claude API or against Amazon Bedrock
+without changing a line: in production these variables would come from AppConfig /
 Secrets Manager."""
 import os
 from datetime import date
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent
-RUTA_CLIENTES = RAIZ / "data" / "clientes.json"
-RUTA_PROMPT = RAIZ / "prompts" / "system.md"
-DIR_VAR = Path(os.getenv("AGIL_VAR_DIR", RAIZ / "var"))  # store + auditoría locales
-DIR_WEB = RAIZ / "web"  # la web estática la sirve el mismo backend (sin CORS)
+ROOT = Path(__file__).resolve().parent.parent
+CUSTOMERS_PATH = ROOT / "data" / "customers.json"
+PROMPT_PATH = ROOT / "prompts" / "system.md"
+VAR_DIR = Path(os.getenv("AGIL_VAR_DIR", ROOT / "var"))  # local store + audit
+WEB_DIR = ROOT / "web"  # the static web is served by the same backend (no CORS)
 
-# "local" = JSON en var/ y sesiones en memoria; "aws" = DynamoDB + CloudWatch Logs.
+# "local" = JSON in var/ and in-memory sessions; "aws" = DynamoDB + CloudWatch Logs.
 BACKEND = os.getenv("AGIL_BACKEND", "local").lower()
-TABLA_DYNAMO = os.getenv("AGIL_TABLA", "agil-demo")
+DYNAMO_TABLE = os.getenv("AGIL_TABLE", "agil-demo")
 
-MODELO = os.getenv("AGIL_MODEL", "claude-sonnet-5-5")
-# Inference profile cross-region (us.*): Bedrock enruta entre regiones de EE.UU.
-MODELO_BEDROCK = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
-REGION_AWS = os.getenv("AWS_REGION", "us-east-2")
-# "medium" es un buen punto de partida para conversación con varias tools.
-ESFUERZO = os.getenv("AGIL_EFFORT", "medium")
-TIMEOUT_LLM_S = float(os.getenv("AGIL_LLM_TIMEOUT", "120"))
+MODEL = os.getenv("AGIL_MODEL", "claude-sonnet-5-5")
+# Cross-region inference profile (us.*): Bedrock routes across US regions.
+BEDROCK_MODEL = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+# "medium" is a good starting point for a conversation with several tools.
+EFFORT = os.getenv("AGIL_EFFORT", "medium")
+LLM_TIMEOUT_S = float(os.getenv("AGIL_LLM_TIMEOUT", "120"))
 
-# Políticas de negocio (en producción: versionadas en DynamoDB/AppConfig).
-# Viven en código y NO en el prompt: el LLM no puede "negociarlas".
-POLITICA = {
-    "max_dias_promesa": 15,
-    "pct_min_parcial": 0.30,
-    "cuotas_permitidas": (2, 3),
-    "umbral_humano_usd": 500.0,
-    "max_pasos_por_turno": 6,  # tope del loop de tools: evita bucles y costos
+# Business policies (in production: versioned in DynamoDB/AppConfig).
+# They live in code and NOT in the prompt: the LLM cannot "negotiate" them.
+POLICY = {
+    "max_promise_days": 15,
+    "min_partial_pct": 0.30,
+    "allowed_installments": (2, 3),
+    "human_threshold_usd": 500.0,
+    "max_steps_per_turn": 6,  # cap on the tool loop: prevents loops and runaway costs
 }
 
 
-def proveedor() -> str:
-    """Elige el cerebro. Sin configuración cae a 'mock' para que el evaluador
-    pueda correr el prototipo sin credenciales."""
-    elegido = os.getenv("LLM_PROVIDER", "").lower()
-    if elegido in ("anthropic", "bedrock", "mock"):
-        return elegido
+def provider() -> str:
+    """Picks the brain. With no configuration it falls back to 'mock' so the
+    reviewer can run the prototype without credentials."""
+    chosen = os.getenv("LLM_PROVIDER", "").lower()
+    if chosen in ("anthropic", "bedrock", "mock"):
+        return chosen
     return "anthropic" if os.getenv("ANTHROPIC_API_KEY") else "mock"
 
 
-def hoy() -> date:
-    """Fecha 'de negocio'. AGIL_HOY permite fijarla y tener demos reproducibles."""
-    valor = os.getenv("AGIL_HOY")
-    return date.fromisoformat(valor) if valor else date.today()
+def today() -> date:
+    """Business date. AGIL_TODAY pins it for reproducible demos."""
+    value = os.getenv("AGIL_TODAY")
+    return date.fromisoformat(value) if value else date.today()

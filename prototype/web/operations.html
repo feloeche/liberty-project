@@ -9,80 +9,80 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="marca">
-      <strong>Proyecto Ágil</strong> <span class="tenue">· consola de operación</span>
+    <div class="brand">
+      <strong>Proyecto Ágil</strong> <span class="muted">· consola de operación</span>
     </div>
-    <nav class="topbar-acciones">
-      <span id="estado-refresh" class="estado-refresh" aria-live="polite"></span>
-      <a class="btn btn-sec" href="/">← Volver al chat</a>
+    <nav class="topbar-actions">
+      <span id="refresh-status" class="refresh-status" aria-live="polite"></span>
+      <a class="btn btn-secondary" href="/">← Volver al chat</a>
     </nav>
   </header>
 
-  <main class="op">
-    <div class="op-barra">
+  <main class="ops">
+    <div class="ops-bar">
       <div>
         <h1 style="font-size:20px">Consola de operación</h1>
-        <p class="tenue">Simula Amazon Connect (cola de casos para asesores) y la consola interna de cobranza. Se actualiza cada 5 s.</p>
+        <p class="muted">Simula Amazon Connect (cola de casos para asesores) y la consola interna de cobranza. Se actualiza cada 5 s.</p>
       </div>
-      <div id="zona-reinicio" class="confirmar">
-        <button id="btn-reiniciar-demo" class="btn" type="button">Reiniciar demo</button>
+      <div id="reset-zone" class="confirm">
+        <button id="btn-reset-demo" class="btn" type="button">Reiniciar demo</button>
       </div>
     </div>
 
-    <section class="tarjeta campana" aria-labelledby="titulo-campana">
-      <h2 id="titulo-campana">📣 Lanzar campaña (contacto proactivo por WhatsApp)</h2>
-      <p class="tenue nota-campana">El agente escribe primero con una plantilla aprobada. Las reglas de supresión (consentimiento, horario, disputas, casos humanos, promesas, frecuencia) se aplican en el backend antes de enviar.</p>
-      <form id="form-campana" class="campana-grid">
-        <fieldset class="campana-segmentos">
+    <section class="card campaign" aria-labelledby="campaign-title">
+      <h2 id="campaign-title">📣 Lanzar campaña (contacto proactivo por WhatsApp)</h2>
+      <p class="muted campaign-note">El agente escribe primero con una plantilla aprobada. Las reglas de supresión (consentimiento, horario, disputas, casos humanos, promesas, frecuencia) se aplican en el backend antes de enviar.</p>
+      <form id="campaign-form" class="campaign-grid">
+        <fieldset class="campaign-segments">
           <legend>Segmentos</legend>
-          <div id="lista-segmentos" class="segmentos"><span class="tenue">Cargando segmentos…</span></div>
+          <div id="segment-list" class="segments"><span class="muted">Cargando segmentos…</span></div>
         </fieldset>
-        <div class="plantilla-preview" id="plantilla-preview" aria-label="Vista previa de la plantilla"></div>
-        <div class="campana-acciones">
+        <div class="template-preview" id="template-preview" aria-label="Vista previa de la plantilla"></div>
+        <div class="campaign-actions">
           <label class="toggle">
-            <input type="checkbox" id="forzar-horario">
-            <span>Ignorar horario <span class="tenue">(solo demo · queda en auditoría)</span></span>
+            <input type="checkbox" id="force-hours">
+            <span>Ignorar horario <span class="muted">(solo demo · queda en auditoría)</span></span>
           </label>
-          <button id="btn-lanzar" class="btn btn-primario" type="submit">Lanzar campaña</button>
-          <span id="estado-campana" class="estado-refresh" role="status"></span>
+          <button id="btn-launch" class="btn btn-primary" type="submit">Lanzar campaña</button>
+          <span id="campaign-status" class="refresh-status" role="status"></span>
         </div>
       </form>
-      <div id="resultado-campana" class="resultado-campana" aria-live="polite"></div>
-      <h3 class="subtitulo">Historial de campañas</h3>
-      <div class="tabla-wrap" id="tabla-campanas"></div>
+      <div id="campaign-result" class="campaign-result" aria-live="polite"></div>
+      <h3 class="subtitle">Historial de campañas</h3>
+      <div class="table-wrap" id="table-campaigns"></div>
     </section>
 
     <section class="kpis" aria-label="Resumen">
-      <div class="kpi"><div class="kpi-valor" id="kpi-casos">–</div><div class="kpi-label">Casos escalados</div></div>
-      <div class="kpi"><div class="kpi-valor" id="kpi-promesas">–</div><div class="kpi-label">Promesas de pago</div></div>
-      <div class="kpi"><div class="kpi-valor" id="kpi-acuerdos">–</div><div class="kpi-label">Acuerdos en cuotas</div></div>
-      <div class="kpi"><div class="kpi-valor" id="kpi-links">–</div><div class="kpi-label">Links de pago</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-cases">–</div><div class="kpi-label">Casos escalados</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-promises">–</div><div class="kpi-label">Promesas de pago</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-plans">–</div><div class="kpi-label">Acuerdos en cuotas</div></div>
+      <div class="kpi"><div class="kpi-value" id="kpi-links">–</div><div class="kpi-label">Links de pago</div></div>
     </section>
 
-    <section class="tarjeta">
+    <section class="card">
       <h2>Casos escalados a un asesor (≈ Amazon Connect)</h2>
-      <div class="tabla-wrap" id="tabla-casos"></div>
+      <div class="table-wrap" id="table-cases"></div>
     </section>
 
     <div class="grid-2">
-      <section class="tarjeta"><h2>Promesas de pago</h2><div class="tabla-wrap" id="tabla-promesas"></div></section>
-      <section class="tarjeta"><h2>Acuerdos en cuotas</h2><div class="tabla-wrap" id="tabla-acuerdos"></div></section>
+      <section class="card"><h2>Promesas de pago</h2><div class="table-wrap" id="table-promises"></div></section>
+      <section class="card"><h2>Acuerdos en cuotas</h2><div class="table-wrap" id="table-plans"></div></section>
     </div>
 
-    <section class="tarjeta"><h2>Links de pago generados</h2><div class="tabla-wrap" id="tabla-links"></div></section>
+    <section class="card"><h2>Links de pago generados</h2><div class="table-wrap" id="table-links"></div></section>
 
-    <section class="tarjeta">
+    <section class="card">
       <h2>Auditoría (≈ CloudWatch Logs)</h2>
-      <div class="filtros">
-        <label for="filtro-cliente">Cliente</label>
-        <select id="filtro-cliente"><option value="">Todos</option></select>
-        <span class="tenue" style="font-size:12px">Últimos 100 eventos, más recientes primero.</span>
+      <div class="filters">
+        <label for="customer-filter">Cliente</label>
+        <select id="customer-filter"><option value="">Todos</option></select>
+        <span class="muted" style="font-size:12px">Últimos 100 eventos, más recientes primero.</span>
       </div>
-      <div class="tabla-wrap" id="tabla-auditoria"></div>
+      <div class="table-wrap" id="table-audit"></div>
     </section>
   </main>
 
   <script src="/static/api.js"></script>
-  <script src="/static/operacion.js"></script>
+  <script src="/static/operations.js"></script>
 </body>
 </html>

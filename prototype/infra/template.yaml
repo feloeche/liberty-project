@@ -1,43 +1,43 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Ágil (demo): una Lambda sirve la web estática y la API del agente de cobranza
-  detrás de un HTTP API; estado en una tabla DynamoDB; el modelo en Amazon Bedrock.
+  Ágil (demo): one Lambda serves the static web and the collections agent API
+  behind an HTTP API; state in a DynamoDB table; the model on Amazon Bedrock.
 
 Parameters:
   DemoToken:
     Type: String
     NoEcho: true
     MinLength: 8
-    Description: Token que la web envía en x-demo-token (se comparte en la URL ?t=...).
+    Description: Token the web sends in x-demo-token (shared in the URL ?t=...).
   LlmProvider:
     Type: String
     Default: bedrock
     AllowedValues: [bedrock, mock]
-    Description: mock = motor de reglas offline (sin costo de modelo).
+    Description: mock = offline rule engine (no model cost).
   BedrockModelId:
     Type: String
     Default: us.anthropic.claude-sonnet-4-6
-    Description: Inference profile cross-region de Claude en Bedrock.
+    Description: Cross-region inference profile for Claude on Bedrock.
   Effort:
     Type: String
     Default: low
     AllowedValues: [low, medium, high]
-    Description: Esfuerzo del modelo. low por el tope de 30 s del HTTP API por request.
-  AgilHoy:
+    Description: Model effort. low because of the HTTP API 30 s per-request cap.
+  AgilToday:
     Type: String
     Default: ""
-    Description: Fecha de negocio fija (AAAA-MM-DD) para una demo reproducible; vacío = hoy.
-  CampanaProgramada:
+    Description: Fixed business date (YYYY-MM-DD) for a reproducible demo; empty = today.
+  ScheduledCampaign:
     Type: String
     Default: DISABLED
     AllowedValues: [DISABLED, ENABLED]
-    Description: Campaña diaria de contacto proactivo. Apagada por defecto para que la demo no envíe sola.
+    Description: Daily proactive contact campaign. Off by default so the demo doesn't send on its own.
 
 Resources:
-  # Estado: promesas, acuerdos, links, casos, sesiones (TTL) y auditoría. On-demand:
-  # sin tráfico no hay costo de capacidad.
-  AgilTabla:
+  # State: promises, payment plans, links, cases, sessions (TTL) and audit. On-demand:
+  # no traffic, no capacity cost.
+  AgilTable:
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
@@ -60,7 +60,7 @@ Resources:
   AgilApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      # Freno de costo y abuso: el token solo no impide ráfagas contra el modelo.
+      # Cost and abuse brake: the token alone doesn't stop bursts against the model.
       DefaultRouteSettings:
         ThrottlingRateLimit: 5
         ThrottlingBurstLimit: 10
@@ -68,60 +68,60 @@ Resources:
   AgilFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .build/app        # lo arma `make build` (código + web + dependencias ARM64)
+      CodeUri: .build/app        # built by `make build` (code + web + ARM64 dependencies)
       Handler: agil.api.lambda_handler
       Runtime: python3.12
       Architectures: [arm64]
-      MemorySize: 1024           # más memoria = más CPU: acorta el arranque en frío
-      Timeout: 60                # un turno puede encadenar varias llamadas al modelo
+      MemorySize: 1024           # more memory = more CPU: shortens the cold start
+      Timeout: 60                # one turn may chain several model calls
       LoggingConfig:
         LogGroup: !Ref AgilLogs
       Environment:
         Variables:
           AGIL_BACKEND: aws
-          AGIL_TABLA: !Ref AgilTabla
+          AGIL_TABLE: !Ref AgilTable
           AGIL_DEMO_TOKEN: !Ref DemoToken
           LLM_PROVIDER: !Ref LlmProvider
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           AGIL_EFFORT: !Ref Effort
-          AGIL_HOY: !Ref AgilHoy
+          AGIL_TODAY: !Ref AgilToday
           AGIL_LLM_TIMEOUT: "25"
       Policies:
-        - DynamoDBCrudPolicy:     # acotada a ESTA tabla
-            TableName: !Ref AgilTabla
+        - DynamoDBCrudPolicy:     # scoped to THIS table
+            TableName: !Ref AgilTable
         - Statement:
             - Effect: Allow
               Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
               Resource:
-                # El inference profile us.* enruta a modelos en varias regiones de EE.UU.,
-                # por eso el foundation-model va con región comodín.
+                # The us.* inference profile routes to models in several US regions,
+                # hence the wildcard region on the foundation-model.
                 - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.*
                 - arn:aws:bedrock:*::foundation-model/anthropic.*
       Events:
-        Todo:
-          Type: HttpApi          # sin Path/Method = ruta $default: la Lambda enruta
+        All:
+          Type: HttpApi          # no Path/Method = $default route: the Lambda routes
           Properties:
             ApiId: !Ref AgilApi
 
-  # Contacto proactivo: EventBridge Scheduler invoca la MISMA Lambda con un evento
-  # propio ({"accion":"campana_diaria"}); las reglas de supresión corren en código.
-  # En producción la lista de clientes vendría de una consulta de Athena sobre el
-  # data lake (propuesta, §4.2) y los envíos irían por End User Messaging Social.
-  CampanaDiaria:
+  # Proactive contact: EventBridge Scheduler invokes the SAME Lambda with its own
+  # event ({"action":"daily_campaign"}); the suppression rules run in code.
+  # In production the customer list would come from an Athena query over the
+  # data lake (proposal, §4.2) and messages would go out via End User Messaging Social.
+  DailyCampaign:
     Type: AWS::Scheduler::Schedule
     Properties:
-      Description: Campaña diaria de avisos (lunes a sábado, 9:00 hora de Panamá)
+      Description: Daily notice campaign (Monday to Saturday, 9:00 Panama time)
       ScheduleExpression: cron(0 9 ? * MON-SAT *)
       ScheduleExpressionTimezone: America/Panama
       FlexibleTimeWindow: { Mode: "OFF" }
-      State: !Ref CampanaProgramada
+      State: !Ref ScheduledCampaign
       Target:
         Arn: !GetAtt AgilFunction.Arn
-        RoleArn: !GetAtt CampanaRol.Arn
-        Input: '{"accion": "campana_diaria"}'
+        RoleArn: !GetAtt CampaignRole.Arn
+        Input: '{"action": "daily_campaign"}'
 
-  # Rol mínimo: Scheduler solo puede invocar esta función.
-  CampanaRol:
+  # Least privilege: Scheduler can only invoke this function.
+  CampaignRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -133,7 +133,7 @@ Resources:
             Condition:
               StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
       Policies:
-        - PolicyName: invocar-agil
+        - PolicyName: invoke-agil
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -143,7 +143,7 @@ Resources:
 
 Outputs:
   Url:
-    Description: URL de la demo (agregar ?t=<DemoToken> la primera vez)
+    Description: Demo URL (append ?t=<DemoToken> the first time)
     Value: !Sub https://${AgilApi}.execute-api.${AWS::Region}.amazonaws.com/
-  Tabla:
-    Value: !Ref AgilTabla
+  Table:
+    Value: !Ref AgilTable

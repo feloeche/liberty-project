@@ -1,1 +1,1 @@
-"""Agil: prototipo del agente conversacional de cobranza de LLA Panamá."""
+"""Agil: prototype of LLA Panama's conversational collections agent."""

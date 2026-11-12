@@ -1,9 +1,9 @@
-"""Backend AWS contra DynamoDB simulado con moto.
+"""AWS backend against DynamoDB simulated with moto.
 
-Por qué moto y no un fake propio: el código usa expresiones reales de boto3
-(begins_with, filtros, paginación, batch_writer); un fake tendría que
-reimplementarlas y podría pasar aunque la llamada real fallara. moto es solo
-dependencia de desarrollo: no entra al paquete de la Lambda."""
+Why moto and not a hand-written fake: the code uses real boto3 expressions
+(begins_with, filters, pagination, batch_writer); a fake would have to
+reimplement them and could pass even if the real call failed. moto is only a
+dev dependency: it is not packaged into the Lambda."""
 import json
 import time
 
@@ -25,72 +25,72 @@ def aws(monkeypatch):
     with moto.mock_aws():
         import boto3
         boto3.client("dynamodb").create_table(
-            TableName=config.TABLA_DYNAMO, BillingMode="PAY_PER_REQUEST",
+            TableName=config.DYNAMO_TABLE, BillingMode="PAY_PER_REQUEST",
             AttributeDefinitions=[{"AttributeName": n, "AttributeType": "S"} for n in ("pk", "sk")],
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}])
-        dynamo.tabla.cache_clear()
-        api._contexto.cache_clear()
+        dynamo.table.cache_clear()
+        api._context.cache_clear()
         yield
-        dynamo.tabla.cache_clear()
-        api._contexto.cache_clear()
+        dynamo.table.cache_clear()
+        api._context.cache_clear()
 
 
 def post(path, body):
-    status, _, salida = api.handle("POST", path, {}, {}, json.dumps(body).encode())
-    return status, json.loads(salida)
+    status, _, out = api.handle("POST", path, {}, {}, json.dumps(body).encode())
+    return status, json.loads(out)
 
 
-def test_store_dynamo_misma_interfaz():
+def test_dynamo_store_same_interface():
     s = dynamo.DynamoStore()
-    s.guardar("promesas", {"cliente_id": "C001", "monto": 10.5, "estado": "activa"})
-    s.guardar("promesas", {"cliente_id": "C002", "monto": 20.0, "estado": "activa"})
-    assert [p["monto"] for p in s.buscar("promesas", "C001")] == [10.5]  # float sin Decimal
-    assert s.contar("promesas") == 2 and len(s.todos("promesas")) == 2
-    s.reiniciar()
-    assert s.contar("promesas") == 0
+    s.save("promises", {"customer_id": "C001", "amount": 10.5, "status": "active"})
+    s.save("promises", {"customer_id": "C002", "amount": 20.0, "status": "active"})
+    assert [p["amount"] for p in s.find("promises", "C001")] == [10.5]  # float, no Decimal
+    assert s.count("promises") == 2 and len(s.all("promises")) == 2
+    s.reset()
+    assert s.count("promises") == 0
 
 
-def test_sesion_expirada_no_se_carga():
-    ses = dynamo.SesionesDynamo()
-    ses.guardar("C001", {"cliente_id": "C001"})
-    assert ses.cargar("C001") == {"cliente_id": "C001"}
-    dynamo.tabla().update_item(Key={"pk": "C001", "sk": "SESION"}, UpdateExpression="SET #t = :v",
+def test_expired_session_is_not_loaded():
+    sessions = dynamo.DynamoSessions()
+    sessions.save("C001", {"customer_id": "C001"})
+    assert sessions.load("C001") == {"customer_id": "C001"}
+    dynamo.table().update_item(Key={"pk": "C001", "sk": "SESSION"}, UpdateExpression="SET #t = :v",
                                ExpressionAttributeNames={"#t": "ttl"}, ExpressionAttributeValues={":v": int(time.time()) - 1})
-    assert ses.cargar("C001") is None
+    assert sessions.load("C001") is None
 
 
-def test_conversacion_stateless_por_http(capsys):
-    """Dos requests = dos 'invocaciones': la sesión vive en DynamoDB, no en memoria."""
-    post("/api/mensaje", {"cliente_id": "C001", "texto": "Mi cédula termina en 4521"})
-    api._contexto.cache_clear()  # simula un contenedor Lambda nuevo
-    _, t = post("/api/mensaje", {"cliente_id": "C001", "texto": "Mándame el link para pagar"})
-    assert [e["nombre"] for e in t["eventos"]] == ["generar_link_pago"]
-    assert '"evento": "mensaje_saliente"' in capsys.readouterr().out  # auditoría a CloudWatch (stdout)
-    _, _, salida = api.handle("GET", "/api/auditoria", {"cliente_id": "C001", "limite": "1"}, {}, b"")
-    assert json.loads(salida)["eventos"][0]["evento"] == "mensaje_saliente"
-    post("/api/reiniciar", {})
-    _, _, salida = api.handle("GET", "/api/operacion", {}, {}, b"")
-    assert json.loads(salida)["links"] == []
+def test_stateless_conversation_over_http(capsys):
+    """Two requests = two 'invocations': the session lives in DynamoDB, not in memory."""
+    post("/api/message", {"customer_id": "C001", "text": "Mi cédula termina en 4521"})
+    api._context.cache_clear()  # simulates a new Lambda container
+    _, t = post("/api/message", {"customer_id": "C001", "text": "Mándame el link para pagar"})
+    assert [e["name"] for e in t["events"]] == ["create_payment_link"]
+    assert '"event": "outbound_message"' in capsys.readouterr().out  # audit to CloudWatch (stdout)
+    _, _, out = api.handle("GET", "/api/audit", {"customer_id": "C001", "limit": "1"}, {}, b"")
+    assert json.loads(out)["events"][0]["event"] == "outbound_message"
+    post("/api/reset", {})
+    _, _, out = api.handle("GET", "/api/operations", {}, {}, b"")
+    assert json.loads(out)["links"] == []
 
 
-def test_campana_y_conversacion_en_dynamo(monkeypatch):
-    """Contactos, campañas y conversación usan la misma tabla (pk = cliente_id; la campaña, pk = SISTEMA)."""
+def test_campaign_and_conversation_on_dynamo(monkeypatch):
+    """Contacts, campaigns and conversation share the table (pk = customer_id; campaigns, pk = SYSTEM)."""
     from datetime import datetime
-    from agil import campanas
-    monkeypatch.setattr(campanas, "ahora_panama", lambda: datetime(2026, 11, 2, 10, tzinfo=campanas.PANAMA))
-    _, r = post("/api/campanas/ejecutar", {"segmentos": ["olvidadizo"]})
-    assert r["resumen"]["enviados"] == 1
-    _, t = post("/api/mensaje", {"cliente_id": "C001", "texto": "Hola"})
-    assert t["eventos"][0]["tipo"] == "campana"
-    _, _, salida = api.handle("GET", "/api/conversacion", {"cliente_id": "C001"}, {}, b"")
-    assert [m["rol"] for m in json.loads(salida)["mensajes"]] == ["campana", "cliente", "agente"]
-    _, r2 = post("/api/campanas/ejecutar", {"segmentos": ["olvidadizo"]})
-    assert r2["campana_id"].endswith("-0002") and r2["resultados"][0]["motivo"] == "contactado_recientemente"
+    from agil import campaigns
+    monkeypatch.setattr(campaigns, "panama_now", lambda: datetime(2026, 11, 2, 10, tzinfo=campaigns.PANAMA))
+    _, r = post("/api/campaigns/run", {"segments": ["forgetful"]})
+    assert r["summary"]["sent"] == 1
+    _, t = post("/api/message", {"customer_id": "C001", "text": "Hola"})
+    assert t["events"][0]["type"] == "campaign"
+    _, _, out = api.handle("GET", "/api/conversation", {"customer_id": "C001"}, {}, b"")
+    assert [m["role"] for m in json.loads(out)["messages"]] == ["campaign", "customer", "agent"]
+    _, r2 = post("/api/campaigns/run", {"segments": ["forgetful"]})
+    assert r2["campaign_id"].endswith("-0002") and r2["results"][0]["reason"] == "recently_contacted"
 
 
-def test_borrar_conversacion_de_un_cliente_no_toca_promesas():
+def test_deleting_a_customer_conversation_keeps_promises():
     s = dynamo.DynamoStore()
-    s.guardar("conversacion", {"cliente_id": "C001", "rol": "cliente", "texto": "hola"})
-    s.guardar("promesas", {"cliente_id": "C001", "monto": 10.0, "estado": "activa"})
-    s.borrar_de("conversacion", "C001")
-    assert s.buscar("conversacion", "C001") == [] and len(s.buscar("promesas", "C001")) == 1
+    s.save("conversation", {"customer_id": "C001", "role": "customer", "text": "hola"})
+    s.save("promises", {"customer_id": "C001", "amount": 10.0, "status": "active"})
+    s.delete_for("conversation", "C001")
+    assert s.find("conversation", "C001") == [] and len(s.find("promises", "C001")) == 1

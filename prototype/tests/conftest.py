@@ -3,21 +3,21 @@ from datetime import date
 import pytest
 
 from agil import config
-from agil.store import Store, cargar_clientes
-from agil.tools import Contexto
+from agil.store import Store, load_customers
+from agil.tools import Context
 
-HOY = date(2026, 11, 2)
+TODAY = date(2026, 11, 2)
 
 
 @pytest.fixture(autouse=True)
-def aislado(tmp_path, monkeypatch):
-    """Cada test escribe en un directorio temporal, sin red y con fecha fija."""
-    monkeypatch.setattr(config, "DIR_VAR", tmp_path)
+def isolated(tmp_path, monkeypatch):
+    """Every test writes to a temporary directory, with no network and a fixed date."""
+    monkeypatch.setattr(config, "VAR_DIR", tmp_path)
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("AGIL_HOY", str(HOY))
+    monkeypatch.setenv("AGIL_TODAY", str(TODAY))
 
 
 @pytest.fixture
 def ctx(tmp_path):
-    clientes, store = cargar_clientes(), Store(tmp_path / "store.json")
-    return lambda cid, verificado=True: Contexto(clientes[cid], store, HOY, verificado)
+    customers, store = load_customers(), Store(tmp_path / "store.json")
+    return lambda cid, verified=True: Context(customers[cid], store, TODAY, verified)

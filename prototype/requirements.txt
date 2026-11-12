@@ -1,6 +1,6 @@
 anthropic>=2.0
 rich>=13.7
 pytest>=8.0
-moto[dynamodb]>=5   # solo tests: DynamoDB simulado
-# Opcionales:
+moto[dynamodb]>=5   # tests only: simulated DynamoDB
+# Optional:
 #   anthropic[bedrock]>=2.0   -> LLM_PROVIDER=bedrock

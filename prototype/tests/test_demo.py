@@ -1,31 +1,31 @@
-"""Extremo a extremo: los escenarios de la demo, offline, sin red."""
-from agil.__main__ import ESCENARIOS
-from agil.agent import Agente
+"""End to end: the demo scenarios, offline, without network."""
+from agil.__main__ import SCENARIOS
+from agil.agent import Agent
 from agil.llm import MockLLM
-from agil.store import Store, cargar_clientes
+from agil.store import Store, load_customers
 
-ESPERADO = {"C001": "GESTIONA", "C002": "GESTIONA", "C003": "ESCALA", "C004": "ESCALA", "C007": "ESCALA"}
+EXPECTED = {"C001": "HANDLED", "C002": "HANDLED", "C003": "ESCALATED", "C004": "ESCALATED", "C007": "ESCALATED"}
 
 
-def test_escenarios_de_la_demo(tmp_path):
-    store, clientes = Store(tmp_path / "store.json"), cargar_clientes()
-    for _, cid, mensajes in ESCENARIOS:
-        agente = Agente(MockLLM(), store, clientes)
-        decisiones = [agente.responder(cid, m).decision for m in mensajes]
-        assert decisiones[-1] == ESPERADO[cid], cid
-    assert len(store.datos["links"]) == 1 and len(store.datos["promesas"]) == 1
-    assert [e["motivo"] for e in store.datos["escalamientos"]] == ["politica_no_permite", "disputa", "vulnerabilidad"]
+def test_demo_scenarios(tmp_path):
+    store, customers = Store(tmp_path / "store.json"), load_customers()
+    for _, cid, messages in SCENARIOS:
+        agent = Agent(MockLLM(), store, customers)
+        decisions = [agent.respond(cid, m).decision for m in messages]
+        assert decisions[-1] == EXPECTED[cid], cid
+    assert len(store.data["links"]) == 1 and len(store.data["promises"]) == 1
+    assert [e["reason"] for e in store.data["escalations"]] == ["policy_not_allowed", "dispute", "vulnerability"]
     assert (tmp_path / "audit.jsonl").exists()
 
 
-def test_guardrail_de_salida_reemplaza_y_escala(tmp_path):
-    class LLMQueAlucina(MockLLM):
-        def crear(self, system, messages, tools):
-            r = super().crear(system, messages, tools)
+def test_output_guardrail_replaces_and_escalates(tmp_path):
+    class HallucinatingLLM(MockLLM):
+        def create(self, system, messages, tools):
+            r = super().create(system, messages, tools)
             if r.stop_reason == "end_turn":
-                r.contenido = [{"type": "text", "text": "Debes USD 999.99 o te vamos a reportar"}]
+                r.content = [{"type": "text", "text": "Debes USD 999.99 o te vamos a reportar"}]
             return r
 
     store = Store(tmp_path / "store.json")
-    t = Agente(LLMQueAlucina(), store, cargar_clientes()).responder("C001", "Cédula 4521, ¿cuánto debo?")
-    assert t.decision == "ESCALA" and "asesor" in t.respuesta and "999" not in t.respuesta
+    t = Agent(HallucinatingLLM(), store, load_customers()).respond("C001", "Cédula 4521, ¿cuánto debo?")
+    assert t.decision == "ESCALATED" and "asesor" in t.reply and "999" not in t.reply

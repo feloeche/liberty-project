@@ -1,7 +1,7 @@
 [project]
 name = "agil"
 version = "0.1.0"
-description = "Prototipo del agente conversacional de cobranza (Proyecto Ágil, LLA Panamá)"
+description = "Conversational collections agent prototype (Proyecto Ágil, LLA Panama)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Bedrock (ruta AWS): firma SigV4 con credenciales de AWS
+# Bedrock (AWS path): SigV4 signing with AWS credentials
 bedrock = ["anthropic[bedrock]>=2.0"]
 
 [dependency-groups]

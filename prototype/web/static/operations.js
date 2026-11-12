@@ -1,244 +1,249 @@
-/* operacion.html: lo que ve el equipo humano. Lee GET /api/operacion y
-   GET /api/auditoria cada 5 s; "Reiniciar demo" hace POST /api/reiniciar {}. */
+/* operations.html: what the human team sees. Polls GET /api/operations and
+   GET /api/audit every 5 s; "Reiniciar demo" sends POST /api/reset {}. */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const REFRESCO_MS = 5000;
+const REFRESH_MS = 5000;
 
-/* Tabla genérica: columnas = [[titulo, (fila) => contenido, claseTd?]] */
-function tabla(filas, columnas, vacio) {
-  if (!filas.length) return el("p", { class: "vacia" }, vacio);
+/* Generic table: columns = [[title, (row) => content, tdClass?]] */
+function table(rows, columns, emptyText) {
+  if (!rows.length) return el("p", { class: "empty-table" }, emptyText);
   return el("table", {},
-    el("thead", {}, el("tr", {}, columnas.map(([t]) => el("th", { scope: "col" }, t)))),
-    el("tbody", {}, filas.map((f) => el("tr", {}, columnas.map(([, fn, cls]) => el("td", { class: cls }, fn(f)))))));
+    el("thead", {}, el("tr", {}, columns.map(([t]) => el("th", { scope: "col" }, t)))),
+    el("tbody", {}, rows.map((r) => el("tr", {}, columns.map(([, fn, cls]) => el("td", { class: cls }, fn(r)))))));
 }
 
 // "2026-11-02T19:12:22.314386" -> "2026-11-02 19:12:22"
-const fechaCorta = (iso) => (iso ? iso.replace("T", " ").slice(0, 19) : "—");
-const quien = (f) => `${f.nombre || ""} (${f.cliente_id})`;
+const shortDate = (iso) => (iso ? iso.replace("T", " ").slice(0, 19) : "—");
+const who = (r) => `${r.name || ""} (${r.customer_id})`;
 
-function pintarOperacion(d) {
-  pintarHistorialCampanas(d.campanas || []);
-  const casos = d.casos || [], promesas = d.promesas || [], acuerdos = d.acuerdos || [], links = d.links || [];
-  $("kpi-casos").textContent = casos.length;
-  $("kpi-promesas").textContent = promesas.length;
-  $("kpi-acuerdos").textContent = acuerdos.length;
+// Spanish display labels for backend enums.
+const PROMISE_STATUS_LABELS = { active: "activa", kept: "cumplida", broken: "incumplida" };
+const CAMPAIGN_STATUS_LABELS = { sent: "enviado", suppressed: "suprimido" };
+
+function renderOperations(d) {
+  renderCampaignHistory(d.campaigns || []);
+  const cases = d.cases || [], promises = d.promises || [], plans = d.plans || [], links = d.links || [];
+  $("kpi-cases").textContent = cases.length;
+  $("kpi-promises").textContent = promises.length;
+  $("kpi-plans").textContent = plans.length;
   $("kpi-links").textContent = links.length;
 
-  $("tabla-casos").replaceChildren(tabla(casos, [
-    ["Caso", (f) => f.caso_id, "mono nowrap"],
-    ["Cliente", quien],
-    ["Cola", (f) => f.cola],
-    ["Motivo", (f) => f.motivo],
-    ["SLA", (f) => el("span", { class: f.sla_horas <= 2 ? "sla-urgente" : "" }, `${f.sla_horas} h`), "nowrap"],
-    ["Resumen para el asesor", (f) => f.resumen, "resumen"],
-    ["Creado", (f) => fechaCorta(f.creado), "mono nowrap"],
+  $("table-cases").replaceChildren(table(cases, [
+    ["Caso", (r) => r.case_id, "mono nowrap"],
+    ["Cliente", who],
+    ["Cola", (r) => r.queue],
+    ["Motivo", (r) => r.reason],
+    ["SLA", (r) => el("span", { class: r.sla_hours <= 2 ? "sla-urgent" : "" }, `${r.sla_hours} h`), "nowrap"],
+    ["Resumen para el asesor", (r) => r.summary, "summary"],
+    ["Creado", (r) => shortDate(r.created), "mono nowrap"],
   ], "Sin casos escalados todavía. Prueba los escenarios 3, 4 o 5 en el chat."));
 
-  $("tabla-promesas").replaceChildren(tabla(promesas, [
-    ["Cliente", quien], ["Monto", (f) => usd(f.monto)], ["Fecha", (f) => f.fecha, "mono"], ["Estado", (f) => f.estado],
+  $("table-promises").replaceChildren(table(promises, [
+    ["Cliente", who], ["Monto", (r) => usd(r.amount)], ["Fecha", (r) => r.date, "mono"],
+    ["Estado", (r) => PROMISE_STATUS_LABELS[r.status] || r.status],
   ], "Sin promesas registradas."));
 
-  $("tabla-acuerdos").replaceChildren(tabla(acuerdos, [
-    ["Cliente", quien], ["Total", (f) => usd(f.total)],
-    ["Plan", (f) => (f.plan || []).map((c) => `${c.cuota}) ${c.fecha}: ${usd(c.monto)}`).join(" · ")],
+  $("table-plans").replaceChildren(table(plans, [
+    ["Cliente", who], ["Total", (r) => usd(r.total)],
+    ["Plan", (r) => (r.plan || []).map((i) => `${i.installment}) ${i.date}: ${usd(i.amount)}`).join(" · ")],
   ], "Sin acuerdos registrados."));
 
-  $("tabla-links").replaceChildren(tabla(links, [
-    ["Cliente", quien], ["Monto", (f) => usd(f.monto)],
-    // URL ficticia (dominio .example): se muestra como texto, no como enlace.
-    ["URL (ficticia)", (f) => f.url, "mono"], ["Vence", (f) => f.vence, "mono"],
+  $("table-links").replaceChildren(table(links, [
+    ["Cliente", who], ["Monto", (r) => usd(r.amount)],
+    // Fictitious URL (.example domain): shown as text, not as a link.
+    ["URL (ficticia)", (r) => r.url, "mono"], ["Vence", (r) => r.expires_on, "mono"],
   ], "Sin links generados."));
 }
 
-/* Resumen legible de una línea de auditoría (los campos varían por tipo de evento). */
-function resumenAuditoria(e) {
-  if (e.evento === "tool") {
-    const r = e.resultado || {};
-    return `${e.nombre} → ${r.ok ? "ok" : (r.error?.codigo || "error")}`;
+/* Readable summary of an audit line (fields vary by event type). */
+function auditSummary(e) {
+  if (e.event === "tool") {
+    const r = e.result || {};
+    return `${e.name} → ${r.ok ? "ok" : (r.error?.code || "error")}`;
   }
-  if (e.texto) return e.decision ? `[${e.decision}] ${e.texto}` : e.texto;
-  if (e.detalle) return e.detalle;
-  const { ts, evento, cliente_id, ...resto } = e;
-  return JSON.stringify(resto);
+  if (e.text) return e.decision ? `[${e.decision}] ${e.text}` : e.text;
+  if (e.detail) return e.detail;
+  const { ts, event, customer_id, ...rest } = e;
+  return JSON.stringify(rest);
 }
 
-function pintarAuditoria(eventos) {
-  $("tabla-auditoria").replaceChildren(tabla(eventos, [
-    ["Hora", (e) => fechaCorta(e.ts), "mono nowrap"],
-    ["Cliente", (e) => e.cliente_id, "mono"],
-    ["Evento", (e) => e.evento],
-    ["Detalle", resumenAuditoria, "resumen"],
+function renderAudit(events) {
+  $("table-audit").replaceChildren(table(events, [
+    ["Hora", (e) => shortDate(e.ts), "mono nowrap"],
+    ["Cliente", (e) => e.customer_id, "mono"],
+    ["Evento", (e) => e.event],
+    ["Detalle", auditSummary, "summary"],
   ], "Sin eventos de auditoría."));
 }
 
-async function refrescar() {
+async function refresh() {
   try {
-    const cid = $("filtro-cliente").value;
-    const q = new URLSearchParams({ limite: "100", ...(cid ? { cliente_id: cid } : {}) });
-    const [op, aud] = await Promise.all([API.get("/api/operacion"), API.get(`/api/auditoria?${q}`)]);
-    pintarOperacion(op);
-    pintarAuditoria(aud.eventos || []);
-    $("estado-refresh").textContent = `Actualizado ${new Date().toLocaleTimeString("es-PA")}`;
+    const cid = $("customer-filter").value;
+    const q = new URLSearchParams({ limit: "100", ...(cid ? { customer_id: cid } : {}) });
+    const [ops, audit] = await Promise.all([API.get("/api/operations"), API.get(`/api/audit?${q}`)]);
+    renderOperations(ops);
+    renderAudit(audit.events || []);
+    $("refresh-status").textContent = `Actualizado ${new Date().toLocaleTimeString("es-PA")}`;
   } catch (e) {
-    $("estado-refresh").textContent = e.message === "no_autorizado" ? "Falta el token" : `Sin conexión (${e.message})`;
+    $("refresh-status").textContent = e.message === "unauthorized" ? "Falta el token" : `Sin conexión (${e.message})`;
   }
 }
 
-async function cargarFiltro() {
+async function loadFilter() {
   try {
-    const { clientes } = await API.get("/api/clientes");
-    $("filtro-cliente").replaceChildren(el("option", { value: "" }, "Todos"),
-      ...clientes.map((c) => el("option", { value: c.cliente_id }, `${c.cliente_id} · ${c.nombre}`)));
-  } catch { /* el filtro queda en "Todos" */ }
+    const { customers } = await API.get("/api/customers");
+    $("customer-filter").replaceChildren(el("option", { value: "" }, "Todos"),
+      ...customers.map((c) => el("option", { value: c.customer_id }, `${c.customer_id} · ${c.name}`)));
+  } catch { /* the filter stays on "Todos" */ }
 }
 
-/* Confirmación inline (sin alert/confirm del navegador). */
-function pedirConfirmacion() {
-  const zona = $("zona-reinicio");
-  const cancelar = el("button", { class: "btn", type: "button", onclick: restaurarBoton }, "Cancelar");
-  zona.replaceChildren(
+/* Inline confirmation (no browser alert/confirm). */
+function askConfirmation() {
+  const zone = $("reset-zone");
+  const cancel = el("button", { class: "btn", type: "button", onclick: restoreButton }, "Cancelar");
+  zone.replaceChildren(
     el("span", { role: "status" }, "¿Borrar sesiones, promesas, acuerdos, links y casos?"),
-    el("button", { class: "btn btn-peligro", type: "button", onclick: reiniciarDemo }, "Sí, reiniciar"),
-    cancelar);
-  cancelar.focus();
+    el("button", { class: "btn btn-danger", type: "button", onclick: resetDemo }, "Sí, reiniciar"),
+    cancel);
+  cancel.focus();
 }
 
-function restaurarBoton() {
-  const btn = el("button", { id: "btn-reiniciar-demo", class: "btn", type: "button", onclick: pedirConfirmacion }, "Reiniciar demo");
-  $("zona-reinicio").replaceChildren(btn);
+function restoreButton() {
+  const btn = el("button", { id: "btn-reset-demo", class: "btn", type: "button", onclick: askConfirmation }, "Reiniciar demo");
+  $("reset-zone").replaceChildren(btn);
   btn.focus();
 }
 
-async function reiniciarDemo() {
+async function resetDemo() {
   try {
-    await API.post("/api/reiniciar", {});
-    $("zona-reinicio").replaceChildren(el("span", { role: "status" }, "Demo reiniciada ✓"));
-    setTimeout(restaurarBoton, 1500);
-    refrescar();
+    await API.post("/api/reset", {});
+    $("reset-zone").replaceChildren(el("span", { role: "status" }, "Demo reiniciada ✓"));
+    setTimeout(restoreButton, 1500);
+    refresh();
   } catch (e) {
-    $("zona-reinicio").replaceChildren(el("span", { role: "alert", class: "sla-urgente" }, `Error: ${e.message}`));
-    setTimeout(restaurarBoton, 2500);
+    $("reset-zone").replaceChildren(el("span", { role: "alert", class: "sla-urgent" }, `Error: ${e.message}`));
+    setTimeout(restoreButton, 2500);
   }
 }
 
-// ---------------------------------------------------------------- campañas
-/* Códigos de supresión del backend -> frase para el comité / el equipo de cobranza. */
-const MOTIVOS = {
-  sin_opt_in: "Sin consentimiento (opt-in) para mensajes proactivos",
+// ---------------------------------------------------------------- campaigns
+/* Backend suppression codes -> sentence for the committee / collections team. */
+const REASONS = {
+  no_opt_in: "Sin consentimiento (opt-in) para mensajes proactivos",
   opt_out: "Pidió no recibir más avisos (respondió BAJA)",
-  fuera_de_horario: "Fuera del horario permitido (8:00–19:00, lun–sáb, hora de Panamá)",
-  reclamo_abierto: "Tiene un reclamo abierto: no se cobra durante una disputa",
-  segmento_no_cobrable: "Cuenta de alto valor / B2B: la gestiona un ejecutivo humano",
-  caso_humano_abierto: "Ya tiene un caso abierto con un asesor",
-  promesa_vigente: "Tiene una promesa de pago vigente",
-  contactado_recientemente: "Ya fue contactado hace menos de 3 días",
-  sin_saldo: "No tiene saldo vencido",
+  outside_hours: "Fuera del horario permitido (8:00–19:00, lun–sáb, hora de Panamá)",
+  open_claim: "Tiene un reclamo abierto: no se cobra durante una disputa",
+  non_collectable_segment: "Cuenta de alto valor / B2B: la gestiona un ejecutivo humano",
+  open_human_case: "Ya tiene un caso abierto con un asesor",
+  active_promise: "Tiene una promesa de pago vigente",
+  recently_contacted: "Ya fue contactado hace menos de 3 días",
+  no_balance: "No tiene saldo vencido",
 };
-const motivoLegible = (m) => MOTIVOS[m] || m || "—";
-const MOTIVOS_CORTOS = {
-  sin_opt_in: "sin opt-in", opt_out: "opt-out (BAJA)", fuera_de_horario: "fuera de horario",
-  reclamo_abierto: "reclamo abierto", segmento_no_cobrable: "B2B → ejecutivo", caso_humano_abierto: "caso con asesor",
-  promesa_vigente: "promesa vigente", contactado_recientemente: "contactado < 3 días", sin_saldo: "sin saldo",
+const readableReason = (m) => REASONS[m] || m || "—";
+const SHORT_REASONS = {
+  no_opt_in: "sin opt-in", opt_out: "opt-out (BAJA)", outside_hours: "fuera de horario",
+  open_claim: "reclamo abierto", non_collectable_segment: "B2B → ejecutivo", open_human_case: "caso con asesor",
+  active_promise: "promesa vigente", recently_contacted: "contactado < 3 días", no_balance: "sin saldo",
 };
-const NOMBRE_SEG = {};
+const SEGMENT_NAMES = {};
 
-async function cargarCampanas() {
+async function loadCampaigns() {
   try {
-    const { segmentos = [], plantilla } = await API.get("/api/campanas/segmentos");
-    segmentos.forEach((s) => (NOMBRE_SEG[s.id] = s.nombre));
-    $("lista-segmentos").replaceChildren(...segmentos.map((s) => el("label", { class: "segmento" },
-      el("input", { type: "checkbox", name: "segmento", value: s.id, checked: s.id !== "alto_valor_b2b" }),
-      el("span", {}, s.nombre),
-      el("span", { class: "tenue segmento-n" }, `${s.elegibles_estimados} elegible${s.elegibles_estimados === 1 ? "" : "s"}`))));
-    pintarPlantilla(plantilla);
-    $("btn-lanzar").disabled = false;
+    const { segments = [], template } = await API.get("/api/campaigns/segments");
+    segments.forEach((s) => (SEGMENT_NAMES[s.id] = s.name));
+    $("segment-list").replaceChildren(...segments.map((s) => el("label", { class: "segment" },
+      el("input", { type: "checkbox", name: "segment", value: s.id, checked: s.id !== "high_value_b2b" }),
+      el("span", {}, s.name),
+      el("span", { class: "muted segment-count" }, `${s.estimated_eligible} elegible${s.estimated_eligible === 1 ? "" : "s"}`))));
+    renderTemplate(template);
+    $("btn-launch").disabled = false;
   } catch (e) {
-    $("lista-segmentos").replaceChildren(el("span", { class: "tenue" },
-      e.message === "no_autorizado" ? "Falta el token." : `Campañas no disponibles (${e.message}).`));
-    $("btn-lanzar").disabled = true;
+    $("segment-list").replaceChildren(el("span", { class: "muted" },
+      e.message === "unauthorized" ? "Falta el token." : `Campañas no disponibles (${e.message}).`));
+    $("btn-launch").disabled = true;
   }
 }
 
-/* Texto de la plantilla con {{1}} resaltado como variable (sin innerHTML). */
-function pintarPlantilla(p) {
-  if (!p) return $("plantilla-preview").replaceChildren();
-  const partes = String(p.texto || "").split(/(\{\{\d+\}\})/);
-  $("plantilla-preview").replaceChildren(
-    el("div", { class: "plantilla-cab" },
-      el("span", { class: "mono" }, p.nombre),
-      el("span", { class: "badge badge-utility" }, p.categoria || "UTILITY")),
-    el("p", { class: "plantilla-texto" },
-      partes.map((t) => (/^\{\{\d+\}\}$/.test(t) ? el("span", { class: "variable", title: "Variable: nombre del cliente" }, t) : t))),
-    el("p", { class: "plantilla-nota" }, "✔ Plantilla aprobada por Meta · no incluye montos: la deuda solo se muestra tras verificar identidad."));
+/* Template text with {{1}} highlighted as a variable (no innerHTML). */
+function renderTemplate(t) {
+  if (!t) return $("template-preview").replaceChildren();
+  const parts = String(t.text || "").split(/(\{\{\d+\}\})/);
+  $("template-preview").replaceChildren(
+    el("div", { class: "template-header" },
+      el("span", { class: "mono" }, t.name),
+      el("span", { class: "badge badge-utility" }, t.category || "UTILITY")),
+    el("p", { class: "template-text" },
+      parts.map((p) => (/^\{\{\d+\}\}$/.test(p) ? el("span", { class: "variable", title: "Variable: nombre del cliente" }, p) : p))),
+    el("p", { class: "template-note" }, "✔ Plantilla aprobada por Meta · no incluye montos: la deuda solo se muestra tras verificar identidad."));
 }
 
-async function lanzarCampana(ev) {
+async function launchCampaign(ev) {
   ev.preventDefault();
-  const segmentos = [...document.querySelectorAll("input[name=segmento]:checked")].map((i) => i.value);
-  if (!segmentos.length) {
-    $("estado-campana").textContent = "Elige al menos un segmento.";
+  const segments = [...document.querySelectorAll("input[name=segment]:checked")].map((i) => i.value);
+  if (!segments.length) {
+    $("campaign-status").textContent = "Elige al menos un segmento.";
     return;
   }
-  const forzar = $("forzar-horario").checked;
-  $("btn-lanzar").disabled = true;
-  $("estado-campana").textContent = "Enviando…";
+  const force = $("force-hours").checked;
+  $("btn-launch").disabled = true;
+  $("campaign-status").textContent = "Enviando…";
   try {
-    const r = await API.post("/api/campanas/ejecutar", { segmentos, ...(forzar ? { forzar_horario: true } : {}) });
-    pintarResultado(r, forzar);
-    $("estado-campana").textContent = "";
-    refrescar();
+    const r = await API.post("/api/campaigns/run", { segments, ...(force ? { force_hours: true } : {}) });
+    renderResult(r, force);
+    $("campaign-status").textContent = "";
+    refresh();
   } catch (e) {
-    $("estado-campana").textContent = `Error: ${e.message}`;
+    $("campaign-status").textContent = `Error: ${e.message}`;
   } finally {
-    $("btn-lanzar").disabled = false;
+    $("btn-launch").disabled = false;
   }
 }
 
-function pintarResultado(r, forzar) {
-  const res = r.resultados || [];
-  const resumen = r.resumen || {};
-  const enviados = resumen.enviados ?? res.filter((x) => x.estado === "enviado").length;
-  const suprimidos = resumen.suprimidos ?? res.filter((x) => x.estado !== "enviado").length;
-  $("resultado-campana").replaceChildren(
-    el("div", { class: "turno-cab resultado-cab" },
-      el("strong", { class: "mono" }, r.campana_id || "Campaña"),
-      el("span", { class: "tenue" }, `${fechaCorta(r.ejecutada)} · plantilla ${r.plantilla || "—"}`),
-      forzar && el("span", { class: "badge badge-forzado" }, "Horario ignorado (demo)")),
+function renderResult(r, forced) {
+  const results = r.results || [];
+  const summary = r.summary || {};
+  const sent = summary.sent ?? results.filter((x) => x.status === "sent").length;
+  const suppressed = summary.suppressed ?? results.filter((x) => x.status !== "sent").length;
+  $("campaign-result").replaceChildren(
+    el("div", { class: "turn-header result-header" },
+      el("strong", { class: "mono" }, r.campaign_id || "Campaña"),
+      el("span", { class: "muted" }, `${shortDate(r.executed_at)} · plantilla ${r.template || "—"}`),
+      forced && el("span", { class: "badge badge-forced" }, "Horario ignorado (demo)")),
     el("div", { class: "kpis" },
-      el("div", { class: "kpi kpi-ok" }, el("div", { class: "kpi-valor" }, enviados), el("div", { class: "kpi-label" }, "Enviados")),
-      el("div", { class: "kpi kpi-sup" }, el("div", { class: "kpi-valor" }, suprimidos), el("div", { class: "kpi-label" }, "Suprimidos por regla"))),
-    el("div", { class: "tabla-wrap" }, tabla(res, [
-      ["Cliente", quien],
-      ["Segmento", (f) => NOMBRE_SEG[f.segmento] || f.segmento],
-      ["Estado", (f) => el("span", { class: `badge ${f.estado === "enviado" ? "badge-enviado" : "badge-suprimido"}` },
-        f.estado === "enviado" ? "enviado" : "suprimido"), "nowrap"],
-      ["Motivo", (f) => (f.estado === "enviado"
-        ? el("span", { class: "tenue" }, "Plantilla entregada; espera respuesta del cliente")
-        : el("span", {}, motivoLegible(f.motivo), f.detalle && f.detalle !== motivoLegible(f.motivo) && el("div", { class: "tenue detalle-motivo" }, f.detalle))), "resumen"],
+      el("div", { class: "kpi kpi-ok" }, el("div", { class: "kpi-value" }, sent), el("div", { class: "kpi-label" }, "Enviados")),
+      el("div", { class: "kpi kpi-suppressed" }, el("div", { class: "kpi-value" }, suppressed), el("div", { class: "kpi-label" }, "Suprimidos por regla"))),
+    el("div", { class: "table-wrap" }, table(results, [
+      ["Cliente", who],
+      ["Segmento", (x) => SEGMENT_NAMES[x.segment] || x.segment],
+      ["Estado", (x) => el("span", { class: `badge ${x.status === "sent" ? "badge-sent" : "badge-suppressed"}` },
+        CAMPAIGN_STATUS_LABELS[x.status] || x.status), "nowrap"],
+      ["Motivo", (x) => (x.status === "sent"
+        ? el("span", { class: "muted" }, "Plantilla entregada; espera respuesta del cliente")
+        : el("span", {}, readableReason(x.reason), x.detail && x.detail !== readableReason(x.reason) && el("div", { class: "muted reason-detail" }, x.detail))), "summary"],
     ], "La campaña no encontró clientes en esos segmentos.")));
 }
 
-function resumenMotivos(pm = {}) {
-  const e = Object.entries(pm);
-  return e.length ? e.map(([k, n]) => `${n} × ${MOTIVOS_CORTOS[k] || k}`).join(" · ") : "—";
+function reasonSummary(byReason = {}) {
+  const e = Object.entries(byReason);
+  return e.length ? e.map(([k, n]) => `${n} × ${SHORT_REASONS[k] || k}`).join(" · ") : "—";
 }
 
-function pintarHistorialCampanas(campanas) {
-  $("tabla-campanas").replaceChildren(tabla(campanas, [
-    ["Campaña", (f) => f.campana_id, "mono nowrap"],
-    ["Ejecutada", (f) => fechaCorta(f.ejecutada), "mono nowrap"],
-    ["Enviados", (f) => f.resumen?.enviados ?? "—"],
-    ["Suprimidos", (f) => f.resumen?.suprimidos ?? "—"],
-    ["Por motivo", (f) => resumenMotivos(f.resumen?.por_motivo), "resumen"],
+function renderCampaignHistory(campaigns) {
+  $("table-campaigns").replaceChildren(table(campaigns, [
+    ["Campaña", (c) => c.campaign_id, "mono nowrap"],
+    ["Ejecutada", (c) => shortDate(c.executed_at), "mono nowrap"],
+    ["Enviados", (c) => c.summary?.sent ?? "—"],
+    ["Suprimidos", (c) => c.summary?.suppressed ?? "—"],
+    ["Por motivo", (c) => reasonSummary(c.summary?.by_reason), "summary"],
   ], "Aún no se ha lanzado ninguna campaña."));
 }
 
-$("form-campana").addEventListener("submit", lanzarCampana);
-$("btn-reiniciar-demo").addEventListener("click", pedirConfirmacion);
-$("filtro-cliente").addEventListener("change", refrescar);
-montarAvisoToken(() => { cargarFiltro(); cargarCampanas(); refrescar(); });
-cargarFiltro();
-cargarCampanas();
-refrescar();
-setInterval(refrescar, REFRESCO_MS);
+$("campaign-form").addEventListener("submit", launchCampaign);
+$("btn-reset-demo").addEventListener("click", askConfirmation);
+$("customer-filter").addEventListener("change", refresh);
+mountTokenBanner(() => { loadFilter(); loadCampaigns(); refresh(); });
+loadFilter();
+loadCampaigns();
+refresh();
+setInterval(refresh, REFRESH_MS);

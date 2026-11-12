@@ -1,48 +1,48 @@
-"""Backend AWS (AGIL_BACKEND=aws): UNA tabla DynamoDB para todo el estado.
+"""AWS backend (AGIL_BACKEND=aws): ONE DynamoDB table for all the state.
 
-Diseño single-table (pk = cliente_id), porque todos los accesos del agente son
-"lo de este cliente" y así cada turno se resuelve con Query por partición:
-  sk = "<tabla>#<ts>#<id>"  -> promesas, acuerdos, links, escalamientos (Store)
-  sk = "SESION"             -> memoria de la conversación, con TTL de 24 h
-                               (la ventana de servicio de WhatsApp)
-  sk = "AUDIT#<ts>#<id>"    -> auditoría que lee /api/auditoria
-El contenido va como JSON en el atributo `datos`: DynamoDB exige Decimal en vez
-de float, y serializar evita convertir montos en cada lectura y escritura.
-Simplificaciones de demo: las vistas globales (operación, contar casos) usan un
-Scan acotado; en producción serían un GSI y un contador atómico, y la sesión
-llevaría bloqueo optimista (versión) contra turnos concurrentes."""
+Single-table design (pk = customer_id), because every agent access is
+"this customer's data", so each turn is resolved with a Query per partition:
+  sk = "<table>#<ts>#<id>"  -> promises, plans, links, escalations (Store)
+  sk = "SESSION"            -> conversation memory, with a 24 h TTL
+                               (the WhatsApp service window)
+  sk = "AUDIT#<ts>#<id>"    -> audit trail read by /api/audit
+The content is stored as JSON in the `data` attribute: DynamoDB requires Decimal
+instead of float, and serializing avoids converting amounts on every read and write.
+Demo simplifications: the global views (operations, case count) use a bounded
+Scan; in production they would be a GSI and an atomic counter, and the session
+would carry optimistic locking (version) against concurrent turns."""
 import json
 import time
 import uuid
 from functools import cache
 
 from . import config
-from .store import ahora
+from .store import now
 
-TTL_SESION_S = 24 * 3600
-MAX_PAGINAS_SCAN = 5  # tope de costo: la tabla de la demo es pequeña
+SESSION_TTL_S = 24 * 3600
+MAX_SCAN_PAGES = 5  # cost cap: the demo table is small
 
 
 @cache
-def tabla():
-    import boto3  # viene incluido en el runtime de Lambda
-    return boto3.resource("dynamodb").Table(config.TABLA_DYNAMO)
+def table():
+    import boto3  # included in the Lambda runtime
+    return boto3.resource("dynamodb").Table(config.DYNAMO_TABLE)
 
 
-def _sk(prefijo: str) -> str:
-    return f"{prefijo}#{ahora()}#{uuid.uuid4().hex[:8]}"
+def _sk(prefix: str) -> str:
+    return f"{prefix}#{now()}#{uuid.uuid4().hex[:8]}"
 
 
-def _query(cliente_id: str, prefijo: str, **kw) -> list[dict]:
+def _query(customer_id: str, prefix: str, **kw) -> list[dict]:
     from boto3.dynamodb.conditions import Key
-    r = tabla().query(KeyConditionExpression=Key("pk").eq(cliente_id) & Key("sk").begins_with(prefijo), **kw)
-    return [json.loads(i["datos"]) for i in r["Items"]]
+    r = table().query(KeyConditionExpression=Key("pk").eq(customer_id) & Key("sk").begins_with(prefix), **kw)
+    return [json.loads(i["data"]) for i in r["Items"]]
 
 
 def _scan(**kw):
-    """Scan paginado y acotado (generador de ítems crudos)."""
-    for _ in range(MAX_PAGINAS_SCAN):
-        r = tabla().scan(**kw)
+    """Paginated, bounded Scan (generator of raw items)."""
+    for _ in range(MAX_SCAN_PAGES):
+        r = table().scan(**kw)
         yield from r["Items"]
         if "LastEvaluatedKey" not in r:
             return
@@ -50,71 +50,71 @@ def _scan(**kw):
 
 
 class DynamoStore:
-    """Misma interfaz que store.Store, sobre DynamoDB."""
+    """Same interface as store.Store, on top of DynamoDB."""
 
-    def guardar(self, t: str, item: dict) -> dict:
-        item = {**item, "creado": ahora()}
-        tabla().put_item(Item={"pk": item["cliente_id"], "sk": _sk(t), "tabla": t,
-                               "datos": json.dumps(item, ensure_ascii=False)})
+    def save(self, t: str, item: dict) -> dict:
+        item = {**item, "created": now()}
+        table().put_item(Item={"pk": item["customer_id"], "sk": _sk(t), "table": t,
+                               "data": json.dumps(item, ensure_ascii=False)})
         return item
 
-    def buscar(self, t: str, cliente_id: str) -> list[dict]:
-        return _query(cliente_id, f"{t}#")
+    def find(self, t: str, customer_id: str) -> list[dict]:
+        return _query(customer_id, f"{t}#")
 
-    def contar(self, t: str) -> int:
+    def count(self, t: str) -> int:
         from boto3.dynamodb.conditions import Attr
-        return sum(1 for _ in _scan(FilterExpression=Attr("tabla").eq(t), ProjectionExpression="pk"))
+        return sum(1 for _ in _scan(FilterExpression=Attr("table").eq(t), ProjectionExpression="pk"))
 
-    def todos(self, t: str) -> list[dict]:
+    def all(self, t: str) -> list[dict]:
         from boto3.dynamodb.conditions import Attr
-        return [json.loads(i["datos"]) for i in _scan(FilterExpression=Attr("tabla").eq(t))]
+        return [json.loads(i["data"]) for i in _scan(FilterExpression=Attr("table").eq(t))]
 
-    def borrar_de(self, t: str, cliente_id: str) -> None:
+    def delete_for(self, t: str, customer_id: str) -> None:
         from boto3.dynamodb.conditions import Key
-        r = tabla().query(KeyConditionExpression=Key("pk").eq(cliente_id) & Key("sk").begins_with(f"{t}#"),
+        r = table().query(KeyConditionExpression=Key("pk").eq(customer_id) & Key("sk").begins_with(f"{t}#"),
                           ProjectionExpression="pk, sk")
-        with tabla().batch_writer() as lote:
+        with table().batch_writer() as batch:
             for i in r["Items"]:
-                lote.delete_item(Key={"pk": i["pk"], "sk": i["sk"]})
+                batch.delete_item(Key={"pk": i["pk"], "sk": i["sk"]})
 
-    def reiniciar(self) -> None:
-        """Borra el estado de negocio y las sesiones; la auditoría se conserva."""
+    def reset(self) -> None:
+        """Deletes business state and sessions; the audit trail is kept."""
         from boto3.dynamodb.conditions import Attr
-        with tabla().batch_writer() as lote:
+        with table().batch_writer() as batch:
             for i in _scan(FilterExpression=~Attr("sk").begins_with("AUDIT#"), ProjectionExpression="pk, sk"):
-                lote.delete_item(Key={"pk": i["pk"], "sk": i["sk"]})
+                batch.delete_item(Key={"pk": i["pk"], "sk": i["sk"]})
 
 
-class SesionesDynamo:
-    """La Lambda es stateless: la sesión se carga al inicio del turno y se guarda al final."""
+class DynamoSessions:
+    """The Lambda is stateless: the session is loaded at the start of the turn and saved at the end."""
 
-    def cargar(self, cliente_id: str) -> dict | None:
-        item = tabla().get_item(Key={"pk": cliente_id, "sk": "SESION"}).get("Item")
-        # El TTL de DynamoDB borra con retraso (hasta horas): se valida también al leer.
-        return json.loads(item["datos"]) if item and item["ttl"] > time.time() else None
+    def load(self, customer_id: str) -> dict | None:
+        item = table().get_item(Key={"pk": customer_id, "sk": "SESSION"}).get("Item")
+        # DynamoDB TTL deletes with a delay (up to hours): it's also checked on read.
+        return json.loads(item["data"]) if item and item["ttl"] > time.time() else None
 
-    def guardar(self, cliente_id: str, sesion: dict) -> None:
-        tabla().put_item(Item={"pk": cliente_id, "sk": "SESION", "ttl": int(time.time()) + TTL_SESION_S,
-                               "datos": json.dumps(sesion, ensure_ascii=False, default=str)})
+    def save(self, customer_id: str, session: dict) -> None:
+        table().put_item(Item={"pk": customer_id, "sk": "SESSION", "ttl": int(time.time()) + SESSION_TTL_S,
+                               "data": json.dumps(session, ensure_ascii=False, default=str)})
 
-    def borrar(self, cliente_id: str | None = None) -> None:
-        if cliente_id:
-            tabla().delete_item(Key={"pk": cliente_id, "sk": "SESION"})
+    def delete(self, customer_id: str | None = None) -> None:
+        if customer_id:
+            table().delete_item(Key={"pk": customer_id, "sk": "SESSION"})
         else:
-            DynamoStore().reiniciar()  # incluye las sesiones de todos
+            DynamoStore().reset()  # includes everyone's sessions
 
 
-def auditar(linea: dict) -> None:
-    """Doble destino: stdout de Lambda = CloudWatch Logs (un JSON por línea,
-    consultable con Logs Insights) y la tabla, para que la web muestre la traza."""
-    texto = json.dumps(linea, ensure_ascii=False, default=str)
-    print(texto, flush=True)
-    tabla().put_item(Item={"pk": linea["cliente_id"], "sk": _sk("AUDIT"), "datos": texto})
+def audit(line: dict) -> None:
+    """Two destinations: Lambda stdout = CloudWatch Logs (one JSON per line,
+    queryable with Logs Insights) and the table, so the web can show the trace."""
+    text = json.dumps(line, ensure_ascii=False, default=str)
+    print(text, flush=True)
+    table().put_item(Item={"pk": line["customer_id"], "sk": _sk("AUDIT"), "data": text})
 
 
-def leer_auditoria(cliente_id: str | None, limite: int) -> list[dict]:
-    if cliente_id:
-        return _query(cliente_id, "AUDIT#", ScanIndexForward=False, Limit=limite)
+def read_audit(customer_id: str | None, limit: int) -> list[dict]:
+    if customer_id:
+        return _query(customer_id, "AUDIT#", ScanIndexForward=False, Limit=limit)
     from boto3.dynamodb.conditions import Attr
-    eventos = [json.loads(i["datos"]) for i in _scan(FilterExpression=Attr("sk").begins_with("AUDIT#"))]
-    return sorted(eventos, key=lambda e: e["ts"], reverse=True)[:limite]
+    events = [json.loads(i["data"]) for i in _scan(FilterExpression=Attr("sk").begins_with("AUDIT#"))]
+    return sorted(events, key=lambda e: e["ts"], reverse=True)[:limit]
