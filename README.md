@@ -62,18 +62,14 @@ Para usar Claude de verdad:
 
 ---
 
----
-
 ## Qué hay en el repositorio
 
 ```
 .
 ├── README.md                          ← este archivo
 ├── docs/
-│   ├── Propuesta_Arquitectura_Agil.pdf ← propuesta de arquitectura y estrategia
-│   └── PROPUESTA_ARQUITECTURA.md      ← versión en Markdown
+│   └── Propuesta_Arquitectura_Agil.pdf ← propuesta de arquitectura y estrategia
 └── prototype/
-    ├── README.md                      ← detalle técnico: módulos, decisiones, despliegue
     ├── agil/                          ← código del agente (Python)
     │   ├── agent.py                   ← orquestador de un turno (verificar → filtros → ciclo de tools → escalar)
     │   ├── tools.py                   ← las 6 herramientas y sus políticas de negocio
@@ -111,7 +107,7 @@ Para usar Claude de verdad:
 - **Canal:** el WhatsApp es simulado (web y terminal). La integración real (AWS End User Messaging Social y plantillas aprobadas por Meta) está descrita en la propuesta §3–§4.
 - **Identidad:** la verificación con los últimos 4 dígitos de la cédula es proporcional para una demo. En producción la reemplazaría un link autenticado (propuesta §17).
 - **Filtros:** los de seguridad son reglas legibles, la primera de tres capas. En producción se suman Bedrock Guardrails y un clasificador (propuesta §5.2).
-- **Qué está simplificado:** está detallado en [`prototype/README.md` → Qué simplifiqué y qué haría en producción](prototype/README.md#3-qué-simplifiqué-y-qué-haría-en-producción).
+- **Qué está simplificado:** la relación entre el prototipo y la arquitectura objetivo está en la propuesta §16, y lo que haría distinto en producción, en §17.
 
 ## Si algo no funciona
 
